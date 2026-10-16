@@ -1,11 +1,12 @@
 """Deterministic Agent Tools and Graph Algorithm Traversals for FalkorDB.
 
-Implements the 5 core tools required by Track 03:
+Implements the 6 core tools required by Track 03:
 1. find_counterpart_expert(topic, company)
 2. detect_policy_conflicts(domain)
 3. find_redundant_systems()
 4. trace_decision_lineage(system_name)
 5. get_warm_intro_path(person_a, person_b)
+6. detect_organizational_silos()
 
 Every tool returns:
 - A clear text answer with citations and evidence
@@ -524,31 +525,56 @@ class GraphAgentTools:
 
     def get_warm_intro_path(self, person_a: str, person_b: str) -> ToolResult:
         """Finds the fastest warm-introduction or dependency chain between two engineers
-
-        across company borders using bounded multi-hop path traversal.
+        across company borders using native shortestPath traversal with bounded fallback.
         """
         graph = self._get_graph()
         subgraph = Subgraph()
 
-        query = """
-            MATCH (a:Person) WHERE toLower(a.name) CONTAINS toLower($p_a) OR toLower(a.id) CONTAINS toLower($p_a)
-            WITH a LIMIT 1
-            MATCH (b:Person) WHERE toLower(b.name) CONTAINS toLower($p_b) OR toLower(b.id) CONTAINS toLower($p_b)
-            WITH a, b LIMIT 1
-            MATCH p = (a)-[*1..4]-(b)
-            WITH p, nodes(p) as nds, relationships(p) as rls, length(p) as h
-            RETURN [n in nds | n.id] as node_ids,
-                   [n in nds | coalesce(n.name, n.id)] as node_names,
-                   [n in nds | labels(n)[0]] as node_labels,
-                   [n in nds | coalesce(n.company_origin, 'External')] as node_companies,
-                   [r in rls | [startNode(r).id, endNode(r).id, type(r)]] as rel_triplets,
-                   h as hops
-            ORDER BY h ASC
-            LIMIT 1
-        """
-        res = graph.query(query, {"p_a": person_a, "p_b": person_b})
+        res = None
+        # 1. Attempt FalkorDB native shortestPath (for directed traversals supported by engine)
+        try:
+            native_q = """
+                MATCH (a:Person), (b:Person)
+                WHERE (toLower(a.name) CONTAINS toLower($p_a) OR toLower(a.id) CONTAINS toLower($p_a))
+                  AND (toLower(b.name) CONTAINS toLower($p_b) OR toLower(b.id) CONTAINS toLower($p_b))
+                WITH a, b LIMIT 1
+                WITH shortestPath((a)-[*..5]->(b)) as p
+                WHERE p IS NOT NULL
+                WITH p, nodes(p) as nds, relationships(p) as rls, length(p) as h
+                RETURN [n in nds | n.id] as node_ids,
+                       [n in nds | coalesce(n.name, n.id)] as node_names,
+                       [n in nds | labels(n)[0]] as node_labels,
+                       [n in nds | coalesce(n.company_origin, 'External')] as node_companies,
+                       [r in rls | [startNode(r).id, endNode(r).id, type(r)]] as rel_triplets,
+                       h as hops
+            """
+            native_res = graph.query(native_q, {"p_a": person_a, "p_b": person_b})
+            if native_res and native_res.result_set:
+                res = native_res
+        except Exception:
+            res = None
 
-        if not res.result_set:
+        # 2. Seamless fallback to bounded bidirectional path match [*1..4]
+        if not res or not res.result_set:
+            query = """
+                MATCH (a:Person) WHERE toLower(a.name) CONTAINS toLower($p_a) OR toLower(a.id) CONTAINS toLower($p_a)
+                WITH a LIMIT 1
+                MATCH (b:Person) WHERE toLower(b.name) CONTAINS toLower($p_b) OR toLower(b.id) CONTAINS toLower($p_b)
+                WITH a, b LIMIT 1
+                MATCH p = (a)-[*1..4]-(b)
+                WITH p, nodes(p) as nds, relationships(p) as rls, length(p) as h
+                RETURN [n in nds | n.id] as node_ids,
+                       [n in nds | coalesce(n.name, n.id)] as node_names,
+                       [n in nds | labels(n)[0]] as node_labels,
+                       [n in nds | coalesce(n.company_origin, 'External')] as node_companies,
+                       [r in rls | [startNode(r).id, endNode(r).id, type(r)]] as rel_triplets,
+                       h as hops
+                ORDER BY h ASC
+                LIMIT 1
+            """
+            res = graph.query(query, {"p_a": person_a, "p_b": person_b})
+
+        if not res or not res.result_set:
             return ToolResult(
                 tool_name="get_warm_intro_path",
                 text_answer=f"No connection path found between '{person_a}' and '{person_b}' within 4 hops.",
@@ -597,5 +623,161 @@ class GraphAgentTools:
             subgraph=subgraph,
         )
 
+    def detect_organizational_silos(self) -> ToolResult:
+        """Discovers isolated organizational islands and silos across FinPay and Vaultly
+        using Weakly Connected Components (WCC) graph clustering.
+        Identifies unintegrated teams, single-tenant clusters, and recommends bridges.
+        """
+        graph = self._get_graph()
+        subgraph = Subgraph()
+
+        node_res = graph.query("""
+            MATCH (n)
+            RETURN n.id, coalesce(n.name, n.title, n.summary, n.id) as display_name,
+                   labels(n)[0] as label, coalesce(n.company_origin, 'External') as company,
+                   properties(n) as props
+        """)
+        rel_res = graph.query("MATCH (a)-[r]->(b) RETURN a.id, b.id, type(r)")
+
+        nodes_data = {
+            r[0]: {
+                "name": r[1],
+                "label": r[2],
+                "company": r[3],
+                "props": r[4] if isinstance(r[4], dict) else {},
+            }
+            for r in node_res.result_set
+        }
+
+        adj: Dict[str, set] = {nid: set() for nid in nodes_data}
+        rel_triplets = []
+        for a_id, b_id, r_type in rel_res.result_set:
+            rel_triplets.append((a_id, b_id, r_type))
+            if a_id in adj and b_id in adj:
+                adj[a_id].add(b_id)
+                adj[b_id].add(a_id)
+
+        # 1. Compute Weakly Connected Components (WCC)
+        visited = set()
+        components = []
+        for nid in nodes_data:
+            if nid not in visited:
+                comp = []
+                queue = [nid]
+                visited.add(nid)
+                for curr in queue:
+                    comp.append(curr)
+                    for neighbor in adj.get(curr, []):
+                        if neighbor not in visited:
+                            visited.add(neighbor)
+                            queue.append(neighbor)
+                components.append(comp)
+
+        components.sort(key=lambda c: len(c), reverse=True)
+
+        silo_components = []
+        integrated_components = []
+
+        for comp_idx, comp_node_ids in enumerate(components):
+            comp_nodes = [nodes_data[nid] for nid in comp_node_ids if nid in nodes_data]
+            companies = {n["company"] for n in comp_nodes if n["company"] not in ("External", "Shared")}
+            teams = [n["name"] for n in comp_nodes if n["label"] == "Team"]
+            systems = [n["name"] for n in comp_nodes if n["label"] == "System"]
+            people = [n["name"] for n in comp_nodes if n["label"] == "Person"]
+
+            comp_info = {
+                "component_id": comp_idx + 1,
+                "node_count": len(comp_node_ids),
+                "companies": list(companies),
+                "teams": teams,
+                "systems": systems,
+                "people": people,
+                "node_ids": comp_node_ids,
+            }
+
+            if len(companies) > 1:
+                integrated_components.append(comp_info)
+            else:
+                silo_components.append(comp_info)
+
+        # 2. Build Subgraph visualization: include siloed nodes and key bridge entities
+        for silo in silo_components:
+            for nid in silo["node_ids"]:
+                ninfo = nodes_data.get(nid, {})
+                subgraph.add_node(
+                    node_id=nid,
+                    name=ninfo.get("name", nid),
+                    label=ninfo.get("label", "Node"),
+                    company=ninfo.get("company", "Unknown"),
+                    props=ninfo.get("props", {}),
+                )
+
+        for integ in integrated_components:
+            for nid in integ["node_ids"]:
+                ninfo = nodes_data.get(nid, {})
+                if ninfo.get("label") in ("Team", "System") and len(subgraph.nodes) < 25:
+                    subgraph.add_node(
+                        node_id=nid,
+                        name=ninfo.get("name", nid),
+                        label=ninfo.get("label", "Node"),
+                        company=ninfo.get("company", "Unknown"),
+                        props=ninfo.get("props", {}),
+                    )
+
+        subgraph_node_ids = {n.id for n in subgraph.nodes}
+        for a_id, b_id, r_type in rel_triplets:
+            if a_id in subgraph_node_ids and b_id in subgraph_node_ids:
+                subgraph.add_edge(a_id, b_id, r_type)
+
+        # 3. Format markdown response
+        lines = [
+            f"### 🏝️ Organizational Silo & Network Topology Analysis (Weakly Connected Components)\n",
+            f"Discovered **{len(components)} connected components** across the enterprise knowledge graph (`{self.graph_name}`):\n",
+            f"- **Integrated Core Networks**: {len(integrated_components)} component(s) bridging FinPay and Vaultly.",
+            f"- **Isolated Organizational Silos**: {len(silo_components)} disconnected island(s) with 0 cross-border connections.\n",
+        ]
+
+        if silo_components:
+            lines.append("#### ⚠️ Critical Siloed Business Units Detected:")
+            for s in silo_components:
+                co_label = s["companies"][0] if s["companies"] else "Isolated"
+                teams_str = ", ".join(s["teams"]) if s["teams"] else "No formal team entity"
+                people_str = ", ".join(s["people"]) if s["people"] else "None"
+                sys_str = ", ".join(s["systems"]) if s["systems"] else "None (Edge/Client layer)"
+                lines.append(
+                    f"\n**[Silo Component #{s['component_id']} - {co_label}]** ({s['node_count']} nodes)\n"
+                    f"- **Isolated Teams**: `{teams_str}`\n"
+                    f"- **Key Personnel**: {people_str}\n"
+                    f"- **Associated Systems**: {sys_str}\n"
+                    f"- **Architectural Risk**: Team operates completely detached from the post-merger integration plane. High risk of duplicated engineering efforts, API schema mismatches, and compliance policy violations.\n"
+                    f"- **Recommended Integration Bridge**: Connect `{teams_str}` to FinPay Platform Infrastructure & Shared Identity via warm-intro or API contract alignment."
+                )
+
+        if integrated_components:
+            lines.append("\n#### 🔗 Cross-Border Integrated Networks:")
+            for integ in integrated_components:
+                teams_str = ", ".join(integ["teams"][:4]) if integ["teams"] else "Cross-functional"
+                lines.append(
+                    f"- **Component #{integ['component_id']}** ({integ['node_count']} nodes): Integrates {', '.join(integ['companies'])}. "
+                    f"Active bridges established across teams `{teams_str}`."
+                )
+
+        lines.append(
+            "\n> *Algorithm: Weakly Connected Components (WCC) computed over the complete multigraph tenant to guarantee organizational visibility.*"
+        )
+
+        return ToolResult(
+            tool_name="detect_organizational_silos",
+            text_answer="\n".join(lines),
+            details={
+                "total_components": len(components),
+                "isolated_silos_count": len(silo_components),
+                "integrated_networks_count": len(integrated_components),
+                "silos": silo_components,
+            },
+            subgraph=subgraph,
+        )
+
 
 agent_tools = GraphAgentTools()
+

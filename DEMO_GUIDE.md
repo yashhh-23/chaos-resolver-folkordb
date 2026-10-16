@@ -51,13 +51,19 @@ When **FinPay** acquired **Vaultly**, engineering and architecture teams inherit
 - **Voiceover:**
   > *"Where can we save infrastructure costs? FalkorDB's hybrid auto-linker compares 384-dimensional dense vectors and matches shared external dependencies. Here, Gatekeeper-Auth and Pulse-Identity both share calls to AWS_KMS with a 0.99 similarity score — an immediate consolidation candidate."*
 
-### **2:00 – 2:30 | Prompt 4: Cross-Company Warm Introduction**
+### **2:00 – 2:20 | Prompt 4: Cross-Company Warm Introduction**
 - **Action:** Click **"Warm Intro Path"**.
 - **Visual:** The shortest path between Aarav Mehta (FinPay) and Diya Nair (Vaultly) lights up with glowing particles traversing system ownership and redundancy edges.
 - **Voiceover:**
   > *"How do these engineers connect without cold emails? FalkorDB evaluates bounded path traversal to find the shortest warm introduction path — connecting Aarav Mehta to Diya Nair in 3 hops via system ownership and redundancy edges (Aarav Mehta → Gatekeeper-Auth → Pulse-Identity ← Diya Nair)."*
 
-### **2:30 – 3:00 | Track 03 Live Mutation: Keeping Knowledge Current**
+### **2:20 – 2:40 | Prompt 5: Organizational Silos & Islands (WCC)**
+- **Action:** Click **"Organizational Silos"**.
+- **Visual:** The agent runs Weakly Connected Components (WCC) to isolate disconnected organizational islands (such as `Vaultly Mobile Experience` and `Arjun Das` operating detached with 0 cross-border links) and contrasts them against the cross-border integrated core.
+- **Voiceover:**
+  > *"Where are our blind spots? OrgBridge computes Weakly Connected Components to identify organizational silos. It immediately catches that Vaultly's Mobile Experience team is a completely isolated island with zero cross-company links to FinPay's infrastructure — preventing a critical post-merger blind spot before launch."*
+
+### **2:40 – 3:00 | Track 03 Live Mutation: Keeping Knowledge Current**
 - **Action:** In the **Live Brain Mutations** bar, click **"Resolve Auth Conflict"**, then **"Merge Sec & Auth"**.
 - **Visual:** The chat logs the transactional execution of Cypher `MERGE`/`SET`. The canvas dynamically updates: the conflicting policies are marked `DEPRECATED`, the new `Unified M&A Adaptive Session Policy` is born, and a joint engineering team is created live in FalkorDB.
 - **Voiceover:**
@@ -98,9 +104,11 @@ To deploy the frontend to Vercel in 60 seconds:
 
 | Hackathon Requirement | How OrgBridge AI Implements It |
 | :--- | :--- |
-| **Multitenant Knowledge Base** | Isolated `finpay_graph` and `vaultly_graph` + unified `merged_brain` in FalkorDB Cloud. |
-| **Entity Resolution** | Dense 384-dim semantic embeddings combined with shared external dependency overlap (`ExternalAPI`). |
-| **Graph-Powered Agent Tools** | Stored PageRank centrality & authorship lineage for SME discovery, bounded path traversal (`[*1..4]`) for warm introductions, and cross-company policy conflict detection. |
+| **Multitenant Knowledge Base** | Isolated `finpay_graph` and `vaultly_graph` + unified `merged_brain` in FalkorDB Cloud with dynamic UI Tenant Selector Pill. |
+| **Entity Resolution & Vector Indexing** | Dense 384-dim semantic embeddings with FalkorDB vector indexes (`System`, `Policy`, `Decision`, `Team`) combined with shared external dependency overlap (`ExternalAPI`). |
+| **Graph Algorithms & Agent Tools** | 6 Core Tools: Stored PageRank centrality & authorship lineage for SME discovery, bounded multi-hop path traversal (`[*1..4]`) with native `shortestPath` fallback for warm introductions, and Weakly Connected Components (WCC) for detecting disconnected organizational silos. |
+| **Autonomous Agent & Text-to-Cypher** | Groq Llama-3.3-70B agent with schema-constrained Cypher generation (`CALL db.labels()`, `CALL db.relationshipTypes()`, query sanitizer) via `/api/chat` and offline deterministic fallback. |
 | **Decision Lineage & Citations** | Clickable RFC documents, Jira tickets, and Slack postmortems tracing every policy back to ground truth. |
 | **Keeping Knowledge Current** | Real-time transactional Cypher `MERGE`/`SET` mutations updating graph state live without re-indexing. |
 | **Full-Stack War Room** | Interactive Next.js 14 split-screen with force-directed 2D canvas, pulsing active subgraphs, and node inspector. |
+

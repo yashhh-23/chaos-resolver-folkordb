@@ -10,13 +10,15 @@ client = TestClient(app)
 
 
 def test_mcp_tool_definitions_schema():
-    assert len(MCP_TOOL_DEFINITIONS) == 5
+    assert len(MCP_TOOL_DEFINITIONS) == 6
     tool_names = [t["name"] for t in MCP_TOOL_DEFINITIONS]
     assert "find_counterpart_expert" in tool_names
     assert "detect_policy_conflicts" in tool_names
     assert "find_redundant_systems" in tool_names
     assert "trace_decision_lineage" in tool_names
     assert "get_warm_intro_path" in tool_names
+    assert "detect_organizational_silos" in tool_names
+
 
 
 def test_tool_find_counterpart_expert():
@@ -78,9 +80,20 @@ def test_tool_get_warm_intro_path():
     assert len(res.subgraph.nodes) >= 2
 
 
+def test_tool_detect_organizational_silos():
+    res = agent_tools.detect_organizational_silos()
+    assert isinstance(res, ToolResult)
+    assert res.tool_name == "detect_organizational_silos"
+    assert "Weakly Connected Components" in res.text_answer
+    assert res.details.get("total_components", 0) >= 1
+    assert len(res.subgraph.nodes) > 0
+
+
 def test_mcp_execute_dispatcher():
     res = execute_tool("find_redundant_systems", {})
     assert res.tool_name == "find_redundant_systems"
+    silo_res = execute_tool("detect_organizational_silos", {})
+    assert silo_res.tool_name == "detect_organizational_silos"
 
 
 def test_fastapi_endpoints():
@@ -94,6 +107,16 @@ def test_fastapi_endpoints():
     assert red_res.status_code == 200
     assert red_res.json()["tool_name"] == "find_redundant_systems"
 
+    # Organizational silos (WCC)
+    silo_res = client.post("/api/tools/detect-silos")
+    assert silo_res.status_code == 200
+    assert silo_res.json()["tool_name"] == "detect_organizational_silos"
+
+    # Chat endpoint (Groq / Offline router)
+    chat_res = client.post("/api/chat", json={"prompt": "Who is the expert on Authentication?"})
+    assert chat_res.status_code == 200
+    assert chat_res.json()["tool_name"] == "find_counterpart_expert"
+
     # Subgraph for visual rendering
     sub_res = client.get("/api/graph/subgraph")
     assert sub_res.status_code == 200
@@ -101,3 +124,32 @@ def test_fastapi_endpoints():
     assert "nodes" in data
     assert "edges" in data
     assert len(data["nodes"]) > 0
+
+
+def test_llm_agent_chat_and_cypher():
+    from src.tools.llm_agent import llm_agent
+
+    # Test deterministic fallback chat
+    res = llm_agent.chat("Detect disconnected organizational silos")
+    assert res.tool_name == "detect_organizational_silos"
+    assert "Weakly Connected Components" in res.text_answer
+
+    # Test schema-constrained safe Cypher execution
+    cypher_res = llm_agent._execute_cypher(
+        "MATCH (p:Person) RETURN p.name, p.role",
+        "List all engineers",
+        "merged_brain",
+    )
+    assert cypher_res.status == "success"
+    assert cypher_res.details["row_count"] >= 1
+
+    # Test security rejection on mutating Cypher
+    blocked_res = llm_agent._execute_cypher(
+        "MATCH (p:Person) DELETE p",
+        "Delete nodes",
+        "merged_brain",
+    )
+    assert blocked_res.status == "error"
+    assert "Security Violation" in blocked_res.text_answer
+
+

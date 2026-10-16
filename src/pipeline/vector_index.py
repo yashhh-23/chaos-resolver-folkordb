@@ -9,6 +9,7 @@ VECTOR_INDEX_COMMANDS = [
     "CREATE VECTOR INDEX FOR (s:System) ON (s.embedding) OPTIONS {dimension: 384, similarityFunction: 'cosine'}",
     "CREATE VECTOR INDEX FOR (p:Policy) ON (p.embedding) OPTIONS {dimension: 384, similarityFunction: 'cosine'}",
     "CREATE VECTOR INDEX FOR (d:Decision) ON (d.embedding) OPTIONS {dimension: 384, similarityFunction: 'cosine'}",
+    "CREATE VECTOR INDEX FOR (t:Team) ON (t.embedding) OPTIONS {dimension: 384, similarityFunction: 'cosine'}",
 ]
 
 
@@ -48,10 +49,15 @@ def decision_embedding_text(summary: str, authority: str = "", source: str = "")
     return f"Decision: {summary} | Authority: {authority} | Source: {source}"
 
 
+def team_embedding_text(name: str, charter: str = "") -> str:
+    """Generates canonical text representation for Team embedding."""
+    return f"Team: {name} | Charter: {charter}"
+
+
 def populate_node_embeddings(graph_name: str) -> Dict[str, int]:
-    """Computes and updates dense vector embeddings on all System, Policy, and Decision nodes."""
+    """Computes and updates dense vector embeddings on all System, Policy, Decision, and Team nodes."""
     graph = db_client.get_graph(graph_name)
-    counts = {"systems": 0, "policies": 0, "decisions": 0}
+    counts = {"systems": 0, "policies": 0, "decisions": 0, "teams": 0}
 
     # 1. Systems
     sys_res = graph.query("MATCH (s:System) RETURN s.id, s.name, s.domain, s.description, s.tech")
@@ -89,9 +95,22 @@ def populate_node_embeddings(graph_name: str) -> Dict[str, int]:
         )
         counts["decisions"] += 1
 
+    # 4. Teams
+    team_res = graph.query("MATCH (t:Team) RETURN t.id, t.name, t.charter")
+    for row in team_res.result_set:
+        team_id, name, charter = row[0], row[1], row[2]
+        text_repr = team_embedding_text(name, charter or "")
+        vec = embedding_service.embed_text(text_repr)
+        graph.query(
+            "MATCH (t:Team {id: $id}) SET t.embedding = vecf32($vec)",
+            {"id": team_id, "vec": vec},
+        )
+        counts["teams"] += 1
+
     logger.info(
         f"[{graph_name}] Embedded {counts['systems']} systems, "
-        f"{counts['policies']} policies, and {counts['decisions']} decisions."
+        f"{counts['policies']} policies, {counts['decisions']} decisions, "
+        f"and {counts['teams']} teams."
     )
     return counts
 

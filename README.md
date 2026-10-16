@@ -48,23 +48,25 @@ chaos-resolver-folkordb/
 │   │   ├── builder.py              # Multigraph Cypher statement compiler & exporter
 │   │   └── seed.py                 # CLI seeder for FalkorDB & artifact generator
 │   ├── tools/
-│   │   ├── graph_tools.py          # 5 Deterministic agent tools returning text + visual Subgraph JSON
+│   │   ├── graph_tools.py          # 6 Deterministic agent tools returning text + visual Subgraph JSON
+│   │   ├── llm_agent.py            # Groq Llama-3.3-70B agent + Schema-Constrained Cypher with offline fallback
 │   │   └── mcp_server.py           # Model Context Protocol (MCP) tool schema & dispatcher
 │   ├── api/
-│   │   └── main.py                 # FastAPI backend server with CORS, visual subgraph & mutation endpoints
+│   │   └── main.py                 # FastAPI backend server with CORS, visual subgraph, /api/chat & mutation endpoints
 │   ├── cli.py                      # Interactive FalkorDB REPL, CLI tool runner, and uvicorn launcher
 │   └── utils/
 │       └── logger.py               # Standardized application logging
 ├── frontend/                       # Next.js 14 App Router War-Room Dashboard
-│   ├── app/page.tsx                # Split-screen agent chat & real-time canvas
+│   ├── app/page.tsx                # Split-screen agent chat & real-time canvas with Tenant Selector Pill
 │   ├── components/GraphCanvas.tsx  # Force-directed dynamic 2D graph with active path isolation
 │   ├── components/ChatPanel.tsx    # Agent chat, one-click judge prompts & live mutation action bar
 │   └── components/NodeInspectorModal.tsx # Node attribute inspector drawer
 └── tests/
     ├── test_schema_and_dataset.py  # Schema, edge integrity, collision guards (9 tests)
     ├── test_auto_linker.py         # Vector embeddings & auto-linker resolution (4 tests)
-    ├── test_agent_tools.py         # Agent tools, MCP schema, & FastAPI endpoints (8 tests)
+    ├── test_agent_tools.py         # Agent tools, MCP schema, WCC, /api/chat & FastAPI endpoints (10 tests)
     └── test_live_mutations.py      # Live graph mutations, Cypher MERGE/SET updates (4 tests)
+
 
 
 ```
@@ -155,8 +157,8 @@ Or run interactively inside the CLI:
 python -m src.cli auto-link --graph merged_brain
 ```
 
-### 5. Run Phase 3 Deterministic Agent Tools (CLI / MCP / REST)
-Execute any of the 5 core tools with human-readable evidence and visual Subgraph JSON:
+### 5. Run Phase 3 Deterministic Agent Tools & Conversational Agent (CLI / MCP / REST)
+Execute any of the 6 core tools with human-readable evidence and visual Subgraph JSON:
 ```bash
 # 1. SME Expert Discovery (PageRank property + authored RFCs)
 python -m src.cli tool find-expert --topic "Authentication" --company Vaultly
@@ -172,6 +174,12 @@ python -m src.cli tool lineage --system "Gatekeeper-Auth"
 
 # 5. Warm Introduction Bounded Path Traversal ([*1..4])
 python -m src.cli tool warm-intro --person-a "Aarav Mehta" --person-b "Diya Nair"
+
+# 6. Organizational Silos & Island Discovery (Weakly Connected Components)
+python -m src.cli tool silos
+
+# Conversational Agent: Groq Llama-3.3-70B with Schema-Constrained Cypher & Offline Fallback
+curl -X POST http://localhost:8000/api/chat -H "Content-Type: application/json" -d '{"prompt": "Show me disconnected organizational silos"}'
 ```
 
 ### 6. Launch FastAPI REST & Subgraph Visualization Server
@@ -190,7 +198,8 @@ Open your browser at:
 👉 **http://localhost:3000**
 
 Features:
-- **Left Panel**: Agent Chat with one-click M&A Crisis Prompts for hackathon judges, source citations (Slack thread, RFC doc, Jira ticket), and active path triggers.
+- **Tenant Selector Pill**: Switch live views between `FinPay (Isolated)`, `Vaultly (Isolated)`, and `Merged Brain 🧠`.
+- **Left Panel**: Autonomous Agent Chat with one-click M&A Crisis Prompts, source citations (Slack thread, RFC doc, Jira ticket), and active path triggers.
 - **Right Panel**: Interactive `react-force-graph-2d` live canvas color-coded by tenant (FinPay Blue, Vaultly Orange, Conflict Red, Redundancy Green).
 - **Active Subgraph Highlighting**: Automatically isolates, zooms, and pulses the exact nodes and relationships traversed when an agent question is answered.
 - **Node Inspector Drawer**: Click any node on the canvas to inspect its full properties, architecture domain, and tenant provenance.
@@ -218,11 +227,12 @@ python -m src.cli mutate reset-demo
 ```bash
 pytest tests/ -v
 ```
-All **25 unit & integration tests** pass across:
-- Multigraph schema integrity, node collisions, and bridge relations (`test_schema_and_dataset.py`)
-- Dense 384-dim normalized vector embeddings and hybrid auto-linker (`test_auto_linker.py`)
-- Deterministic M&A agent tools, MCP schemas, and FastAPI endpoints (`test_agent_tools.py`)
-- Live graph mutations, transactional Cypher updates, and Track 03 real-time state maintenance (`test_live_mutations.py`)
+All **27 unit & integration tests** pass across:
+- Multigraph schema integrity, node collisions, and bridge relations (`test_schema_and_dataset.py` - 9 tests)
+- Dense 384-dim normalized vector embeddings and hybrid auto-linker (`test_auto_linker.py` - 4 tests)
+- Deterministic M&A agent tools, WCC, MCP schemas, /api/chat, & FastAPI endpoints (`test_agent_tools.py` - 10 tests)
+- Live graph mutations, transactional Cypher updates, and Track 03 real-time state maintenance (`test_live_mutations.py` - 4 tests)
+
 
 
 

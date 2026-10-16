@@ -86,3 +86,14 @@ export async function mutateGraph(
   return await res.json();
 }
 
+export async function chatWithAgent(prompt: string, graph?: string): Promise<ToolResponse> {
+  const res = await fetch(`${API_BASE}/api/chat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ prompt, graph }),
+  });
+  if (!res.ok) throw new Error(`Agent chat failed: ${res.statusText}`);
+  return await res.json();
+}
+
+

@@ -17,7 +17,8 @@ import {
   RotateCcw,
   CheckCircle2,
 } from "lucide-react";
-import { SubgraphData, ToolResponse, callTool, mutateGraph } from "@/lib/api";
+import { SubgraphData, ToolResponse, callTool, mutateGraph, chatWithAgent } from "@/lib/api";
+
 
 
 export interface Message {
@@ -226,7 +227,15 @@ const CRISIS_PROMPTS = [
     endpoint: "warm-intro-path",
     payload: { person_a: "Aarav Mehta", person_b: "Diya Nair" },
   },
+  {
+    label: "Organizational Silos",
+    icon: Layers,
+    prompt: "Discover isolated organizational islands and single-tenant silos across FinPay and Vaultly using Weakly Connected Components (WCC).",
+    endpoint: "detect-silos",
+    payload: {},
+  },
 ];
+
 
 export default function ChatPanel({
   onSubgraphUpdate,
@@ -494,7 +503,20 @@ export default function ChatPanel({
 
       payload = { domain };
     }
-    // 5. Redundant Systems (default)
+    // 5. Organizational Silos (WCC)
+    else if (
+      lower.includes("silo") ||
+      lower.includes("island") ||
+      lower.includes("isolated") ||
+      lower.includes("wcc") ||
+      lower.includes("component") ||
+      lower.includes("unconnected") ||
+      lower.includes("topology")
+    ) {
+      endpoint = "detect-silos";
+      payload = {};
+    }
+    // 6. Redundant Systems (default)
     else {
       endpoint = "find-redundant-systems";
       payload = {};
@@ -511,7 +533,15 @@ export default function ChatPanel({
     setIsLoading(true);
 
     try {
-      const res: ToolResponse = await callTool(endpoint, payload);
+      let res: ToolResponse;
+      try {
+        // Primary path: Autonomous Groq Llama-3.3-70B agent + Schema-Constrained Cypher (/api/chat)
+        res = await chatWithAgent(userText);
+      } catch (agentErr) {
+        // Fallback path: Deterministic client-side tool routing if /api/chat is unreachable
+        res = await callTool(endpoint, payload);
+      }
+
       setMessages((prev) => [
         ...prev,
         {
@@ -523,7 +553,7 @@ export default function ChatPanel({
           timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
         },
       ]);
-      if (res.subgraph) {
+      if (res.subgraph && res.subgraph.nodes?.length > 0) {
         onSubgraphUpdate(res.subgraph);
       }
     } catch (err: any) {

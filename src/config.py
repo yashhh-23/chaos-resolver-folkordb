@@ -21,8 +21,10 @@ class Settings(BaseSettings):
     graph_vaultly: str = "vaultly_graph"
     graph_merged: str = "merged_brain"
 
-    # LLM Settings (for Phase 2 & 3)
+    # LLM Settings (for Phase 2 & 3: Groq Llama-3.3-70B / OpenAI)
+    groq_api_key: Optional[str] = None
     openai_api_key: Optional[str] = None
+    llm_model: str = "llama-3.3-70b-versatile"
 
     # Auto-Linker Engine Parameters
     auto_linker_threshold: float = 0.82

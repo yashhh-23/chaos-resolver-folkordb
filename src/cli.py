@@ -166,7 +166,7 @@ def main():
     serve_parser.add_argument("--host", default="0.0.0.0", help="Host interface (default 0.0.0.0)")
 
     # tool subcommand
-    tool_parser = subparsers.add_parser("tool", help="Run one of the 5 deterministic M&A agent tools")
+    tool_parser = subparsers.add_parser("tool", help="Run one of the 6 deterministic M&A agent tools")
     tool_sub = tool_parser.add_subparsers(dest="tool_action")
 
     # tool: find-expert
@@ -189,6 +189,10 @@ def main():
     t_intro = tool_sub.add_parser("warm-intro", help="Find shortest warm introduction path between two people")
     t_intro.add_argument("--person-a", required=True, help="Person A name")
     t_intro.add_argument("--person-b", required=True, help="Person B name")
+
+    # tool: silos
+    tool_sub.add_parser("silos", help="Detect disconnected organizational silos using Weakly Connected Components (WCC)")
+
 
     # mutate subcommand (Phase 5 Live Brain Mutations)
     mutate_parser = subparsers.add_parser("mutate", help="Execute live graph mutations (Track 03)")
@@ -229,8 +233,12 @@ def main():
         elif args.tool_action == "warm-intro":
             res = agent_tools.get_warm_intro_path(person_a=args.person_a, person_b=args.person_b)
             console.print(Panel(res.text_answer, title="Tool: get_warm_intro_path", border_style="blue"))
+        elif args.tool_action == "silos":
+            res = agent_tools.detect_organizational_silos()
+            console.print(Panel(res.text_answer, title="Tool: detect_organizational_silos (WCC)", border_style="cyan"))
         else:
             tool_parser.print_help()
+
     elif args.subcommand == "mutate":
         from src.pipeline.mutations import live_mutations
         if args.mutate_action == "resolve-auth":

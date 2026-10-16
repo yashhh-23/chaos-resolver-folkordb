@@ -81,6 +81,14 @@ MCP_TOOL_DEFINITIONS: List[Dict[str, Any]] = [
             "required": ["person_a", "person_b"],
         },
     },
+    {
+        "name": "detect_organizational_silos",
+        "description": "Discovers isolated organizational islands and single-tenant silos across FinPay and Vaultly using Weakly Connected Components (WCC) graph clustering.",
+        "parameters": {
+            "type": "object",
+            "properties": {},
+        },
+    },
 ]
 
 
@@ -106,5 +114,8 @@ def execute_tool(tool_name: str, arguments: Dict[str, Any]) -> ToolResult:
             person_a=arguments.get("person_a", ""),
             person_b=arguments.get("person_b", ""),
         )
+    elif tool_name == "detect_organizational_silos":
+        return agent_tools.detect_organizational_silos()
     else:
         raise ValueError(f"Unknown MCP tool: {tool_name}")
+

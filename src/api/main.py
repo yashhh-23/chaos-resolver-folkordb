@@ -1,6 +1,7 @@
 """FastAPI Backend Server for OrgBridge AI (The M&A Chaos Resolver).
 
-Serves the 5 deterministic graph algorithm tools, MCP schemas,
+Serves the 6 deterministic graph algorithm tools, MCP schemas,
+Groq Llama-3.3-70B agent with schema-constrained Cypher,
 and live visual subgraph payloads for the Next.js War Room dashboard.
 """
 
@@ -14,6 +15,8 @@ from src.utils.logger import logger
 from src.db.client import db_client
 from src.tools.graph_tools import agent_tools, ToolResult, Subgraph
 from src.tools.mcp_server import MCP_TOOL_DEFINITIONS, execute_tool
+from src.tools.llm_agent import llm_agent
+
 
 app = FastAPI(
     title="OrgBridge AI API",
@@ -67,6 +70,12 @@ class MergeTeamsRequest(BaseModel):
 class MCPExecuteRequest(BaseModel):
     tool_name: str
     arguments: Dict[str, Any] = Field(default_factory=dict)
+
+
+class ChatRequest(BaseModel):
+    prompt: str = Field(..., description="User query or command for the agent", examples=["Who are the experts on Authentication?"])
+    graph: Optional[str] = Field(default=None, description="Optional target multigraph tenant", examples=["merged_brain"])
+
 
 
 # Endpoints
@@ -145,6 +154,26 @@ def get_warm_intro_path(req: WarmIntroRequest):
         return agent_tools.get_warm_intro_path(person_a=req.person_a, person_b=req.person_b)
     except Exception as e:
         logger.error(f"Error in get_warm_intro_path: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/tools/detect-silos", response_model=ToolResult)
+def detect_organizational_silos():
+    """Tool 6: Discovers isolated organizational islands and silos across FinPay and Vaultly (WCC)."""
+    try:
+        return agent_tools.detect_organizational_silos()
+    except Exception as e:
+        logger.error(f"Error in detect_organizational_silos: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/chat", response_model=ToolResult)
+def chat_with_agent(req: ChatRequest):
+    """Conversational endpoint powered by Groq Llama-3.3-70B with schema-constrained Cypher and tool fallback."""
+    try:
+        return llm_agent.chat(user_prompt=req.prompt, graph_name=req.graph)
+    except Exception as e:
+        logger.error(f"Error in chat endpoint: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
