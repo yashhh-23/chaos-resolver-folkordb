@@ -47,7 +47,7 @@ When **FinPay** acquired **Vaultly**, engineering and architecture teams inherit
 
 ### **1:30 – 2:00 | Prompt 3: Duplicate Microservices & Shared APIs**
 - **Action:** Click **"Redundant Systems"**.
-- **Visual:** The canvas isolates clusters of redundant services (Gatekeeper-Auth vs. Pulse-Identity, FinPay-Ledger-Core vs. Vault-Balance-Service) connected via green `[:REDUNDANT_WITH]` edges and their shared calls to UIDAI Aadhaar and Stripe.
+- **Visual:** The canvas isolates clusters of redundant services (Gatekeeper-Auth vs. Pulse-Identity, FinPay-Core-Ledger vs. Vault-Engine) connected via green `[:REDUNDANT_WITH]` edges and their shared calls to UIDAI Aadhaar and Stripe.
 - **Voiceover:**
   > *"Where can we save infrastructure costs? FalkorDB's hybrid auto-linker compares 384-dimensional dense vectors and matches shared external dependencies. Here, Gatekeeper-Auth and Pulse-Identity both call UIDAI Aadhaar with an 89% semantic overlap — an immediate consolidation candidate."*
 

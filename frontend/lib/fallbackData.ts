@@ -63,18 +63,18 @@ export const FALLBACK_STATIC_GRAPH: SubgraphData = {
       properties: { domain: "Authentication", status: "ACTIVE" },
     },
     {
-      id: "finpay:sys:finpay_ledger_core",
-      name: "FinPay-Ledger-Core",
+      id: "finpay:sys:finpay_core_ledger",
+      name: "FinPay-Core-Ledger",
       label: "System",
       company_origin: "FinPay",
       properties: { tech: "Java / Spring Boot", domain: "Ledger", tier: "Tier-1" },
     },
     {
-      id: "vaultly:sys:vault_balance_service",
-      name: "Vault-Balance-Service",
+      id: "vaultly:sys:vault_engine",
+      name: "Vault-Engine",
       label: "System",
       company_origin: "Vaultly",
-      properties: { tech: "Rust / Actix", domain: "Core Services", tier: "Tier-1" },
+      properties: { tech: "Rust / Actix", domain: "Ledger", tier: "Tier-1" },
     },
   ],
   edges: [
@@ -111,10 +111,10 @@ export const FALLBACK_STATIC_GRAPH: SubgraphData = {
       rel_type: "OWNS",
     },
     {
-      source: "finpay:sys:finpay_ledger_core",
-      target: "vaultly:sys:vault_balance_service",
+      source: "finpay:sys:finpay_core_ledger",
+      target: "vaultly:sys:vault_engine",
       rel_type: "REDUNDANT_WITH",
-      properties: { similarity: 0.86 },
+      properties: { similarity: 0.99 },
     },
   ],
 };

@@ -32,14 +32,13 @@ export interface Message {
 const KNOWN_SYSTEMS = [
   "Gatekeeper-Auth",
   "Pulse-Identity",
-  "FinPay-Ledger-Core",
-  "Vault-Balance-Service",
+  "FinPay-Core-Ledger",
+  "Vault-Engine",
   "FinPay-Mesh-Gateway",
   "Vaultly-Public-API",
-  "FinPay-Risk-Engine",
-  "Vault-Fraud-Shield",
-  "FinPay-Audit-Vault",
-  "Vaultly-Archiver",
+  "Customer-KYC-Service",
+  "User-Onboarding-Verification",
+  "core-api",
 ];
 
 const KNOWN_PEOPLE = [
