@@ -11,7 +11,7 @@
 ## 🎯 Executive Summary for Judges
 
 When **FinPay** acquired **Vaultly**, engineering and architecture teams inherited massive organizational friction:
-- **Duplicate Microservices:** Both companies built separate authentication, balance tracking, and ledger services.
+- **Duplicate Microservices:** Both companies built separate authentication, KYC verification, and core ledger services (`FinPay-Core-Ledger` vs. `Vault-Engine`).
 - **Hidden Policy Contradictions:** FinPay strictly purges security logs after 30 days; Vaultly mandates a 180-day forensic audit retention rule.
 - **Architectural Contradictions:** FinPay forces 15-minute expiring JWTs; Vaultly relies on 7-day mobile session continuity.
 - **Tribal Knowledge Silos:** Engineers don't know who owns what or whom to contact across company borders.
@@ -37,25 +37,25 @@ When **FinPay** acquired **Vaultly**, engineering and architecture teams inherit
 - **Action:** Click **"Auth SME Discovery"** under Judge Evaluation Prompts.
 - **Visual:** The agent immediately replies with **Diya Nair** (PageRank influence 0.92, #1 for Authentication). The canvas isolates Diya Nair, her authored RFCs, and resolved Jira tickets in bright cyan.
 - **Voiceover:**
-  > *"Who actually knows the authentication stack at Vaultly? Instead of asking Slack, our agent runs PageRank over authored RFCs, resolved high-severity incidents, and system ownership. It identifies Diya Nair as the authoritative counterpart, citing her exact RFC-104 and postmortem."*
+  > *"Who actually knows the authentication stack at Vaultly? Instead of asking Slack, our agent runs PageRank over authored RFCs, resolved high-severity incidents, and system ownership. It identifies Diya Nair as the authoritative counterpart, citing her exact RFC-042 and postmortem."*
 
 ### **1:00 – 1:30 | Prompt 2: Policy & Retention Conflicts**
-- **Action:** Click **"Policy Conflicts"**.
+- **Action:** Click **"Policy Collisions"**.
 - **Visual:** The agent exposes the critical clash: FinPay's 30-Day Purge vs. Vaultly's 180-Day Forensic Audit rule. The canvas highlights the red `[:CONFLICTS_WITH]` edge connecting both systems.
 - **Voiceover:**
-  > *"Next, compliance. The agent traverses FalkorDB's `[:CONFLICTS_WITH]` bridge edges to detect an active regulatory clash: FinPay automatically purges session telemetry in 30 days, while Vaultly's policy mandates 180 days for financial audits. The lineage traces back to FinPay's RFC-088 and Vaultly's audit standard."*
+  > *"Next, compliance. The agent traverses FalkorDB's `[:CONFLICTS_WITH]` bridge edges to detect an active regulatory clash: FinPay automatically purges session telemetry in 30 days, while Vaultly's policy mandates 180 days for financial audits. The lineage traces back to FinPay's RFC-089 and Vaultly's audit standard."*
 
 ### **1:30 – 2:00 | Prompt 3: Duplicate Microservices & Shared APIs**
 - **Action:** Click **"Redundant Systems"**.
-- **Visual:** The canvas isolates clusters of redundant services (Gatekeeper-Auth vs. Pulse-Identity, FinPay-Core-Ledger vs. Vault-Engine) connected via green `[:REDUNDANT_WITH]` edges and their shared calls to UIDAI Aadhaar and Stripe.
+- **Visual:** The canvas isolates clusters of redundant services (Gatekeeper-Auth vs. Pulse-Identity, FinPay-Core-Ledger vs. Vault-Engine, Customer-KYC-Service vs. User-Onboarding-Verification) connected via green `[:REDUNDANT_WITH]` edges and their shared calls to AWS KMS, Stripe, and UIDAI Aadhaar.
 - **Voiceover:**
-  > *"Where can we save infrastructure costs? FalkorDB's hybrid auto-linker compares 384-dimensional dense vectors and matches shared external dependencies. Here, Gatekeeper-Auth and Pulse-Identity both call UIDAI Aadhaar with an 89% semantic overlap — an immediate consolidation candidate."*
+  > *"Where can we save infrastructure costs? FalkorDB's hybrid auto-linker compares 384-dimensional dense vectors and matches shared external dependencies. Here, Gatekeeper-Auth and Pulse-Identity both share calls to AWS_KMS with a 0.99 similarity score — an immediate consolidation candidate."*
 
 ### **2:00 – 2:30 | Prompt 4: Cross-Company Warm Introduction**
-- **Action:** Click **"Cross-Border Warm Intro"**.
-- **Visual:** The shortest path between Aarav Mehta (FinPay) and Diya Nair (Vaultly) lights up with glowing particles traversing their shared team leads.
+- **Action:** Click **"Warm Intro Path"**.
+- **Visual:** The shortest path between Aarav Mehta (FinPay) and Diya Nair (Vaultly) lights up with glowing particles traversing system ownership and redundancy edges.
 - **Voiceover:**
-  > *"How do these engineers connect without cold emails? FalkorDB evaluates bounded path traversal to find the shortest warm introduction path — connecting Aarav Mehta to Diya Nair in 4 hops through their respective team leads."*
+  > *"How do these engineers connect without cold emails? FalkorDB evaluates bounded path traversal to find the shortest warm introduction path — connecting Aarav Mehta to Diya Nair in 3 hops via system ownership and redundancy edges (Aarav Mehta → Gatekeeper-Auth → Pulse-Identity ← Diya Nair)."*
 
 ### **2:30 – 3:00 | Track 03 Live Mutation: Keeping Knowledge Current**
 - **Action:** In the **Live Brain Mutations** bar, click **"Resolve Auth Conflict"**, then **"Merge Sec & Auth"**.
