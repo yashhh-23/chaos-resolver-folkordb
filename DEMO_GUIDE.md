@@ -2,6 +2,7 @@
 
 > **FalkorDB Hackathon (Track 03: Company Brain)**  
 > **Repository:** https://github.com/yashhh-23/chaos-resolver-folkordb  
+> **Live War-Room UI (Vercel):** https://frontend-blond-gamma-x5p8l19cp2.vercel.app  
 > **Live Backend API (Render):** https://orgbridge-ai-backend.onrender.com  
 > **Interactive Swagger Docs:** https://orgbridge-ai-backend.onrender.com/docs  
 
