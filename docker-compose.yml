@@ -1,0 +1,20 @@
+version: '3.8'
+
+services:
+  falkordb:
+    image: falkordb/falkordb:latest
+    container_name: falkordb-m-and-a
+    ports:
+      - "6379:6379"
+    volumes:
+      - falkordb-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  falkordb-data:
+    driver: local
