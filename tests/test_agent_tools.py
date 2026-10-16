@@ -53,6 +53,18 @@ def test_tool_trace_decision_lineage():
     assert "15-min JWT expiry" in res.text_answer
     assert len(res.subgraph.nodes) > 0
 
+    # Test reverse direction conflict surfacing on Vaultly counterpart
+    res_pulse = agent_tools.trace_decision_lineage("Pulse-Identity")
+    assert isinstance(res_pulse, ToolResult)
+    assert "Pulse-Identity" in res_pulse.text_answer
+    assert "Conflict" in res_pulse.text_answer or "Conflict" in str(res_pulse.subgraph.edges)
+    assert len(res_pulse.subgraph.nodes) > 0
+
+    # Ensure no duplicate governing decision headings for the same decision
+    lines = res_pulse.text_answer.split("\n")
+    gov_lines = [l for l in lines if l.startswith("#### Governing Decision:")]
+    assert len(gov_lines) == len(set(gov_lines))
+
 
 def test_tool_get_warm_intro_path():
     res = agent_tools.get_warm_intro_path(person_a="Aarav Mehta", person_b="Diya Nair")

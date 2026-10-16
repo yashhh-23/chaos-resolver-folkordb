@@ -64,6 +64,11 @@ def test_build_node_merge_cypher():
     assert "test@finpay.com" in cypher
     assert "FinPay" in cypher
 
+    # Test backslash and single quote escaping
+    escaped_cypher = build_node_merge_cypher("Person", {"id": "test\\id", "name": "O'Connor\\"})
+    assert "test\\\\id" in escaped_cypher
+    assert "O\\'Connor\\\\" in escaped_cypher
+
 
 def test_build_relationship_merge_cypher():
     cypher = build_relationship_merge_cypher(
@@ -76,6 +81,17 @@ def test_build_relationship_merge_cypher():
     assert "finpay:sys:gatekeeper_auth" in cypher
     assert "vaultly:sys:pulse_identity" in cypher
     assert "0.93" in cypher
+
+    # Test backslash and single quote escaping in relationship
+    rel_escaped = build_relationship_merge_cypher(
+        source_id="finpay:sys:a\\1",
+        target_id="vaultly:sys:b'2",
+        rel_type="CALLS",
+        properties={"path": "C:\\logs\\test'"},
+    )
+    assert "finpay:sys:a\\\\1" in rel_escaped
+    assert "vaultly:sys:b\\'2" in rel_escaped
+    assert "C:\\\\logs\\\\test\\'" in rel_escaped
 
 
 def test_entity_collision_prevention():

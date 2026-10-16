@@ -65,9 +65,6 @@ MATCH (a {id: 'vaultly:pol:forensic_audit_retention'}), (b {id: 'vaultly:doc:com
 MERGE (n:ExternalAPI {id: 'ext:api:uidai_aadhaar'}) ON CREATE SET n = {id: 'ext:api:uidai_aadhaar', name: 'UIDAI_Aadhaar', category: 'Identity & Verification', provider: 'Unique Identification Authority of India', company_origin: 'External'} ON MATCH SET n = {id: 'ext:api:uidai_aadhaar', name: 'UIDAI_Aadhaar', category: 'Identity & Verification', provider: 'Unique Identification Authority of India', company_origin: 'External'};
 MERGE (n:ExternalAPI {id: 'ext:api:stripe'}) ON CREATE SET n = {id: 'ext:api:stripe', name: 'Stripe_Gateway', category: 'Payment Processing', provider: 'Stripe, Inc.', company_origin: 'External'} ON MATCH SET n = {id: 'ext:api:stripe', name: 'Stripe_Gateway', category: 'Payment Processing', provider: 'Stripe, Inc.', company_origin: 'External'};
 MERGE (n:ExternalAPI {id: 'ext:api:aws_kms'}) ON CREATE SET n = {id: 'ext:api:aws_kms', name: 'AWS_KMS', category: 'Key Management', provider: 'Amazon Web Services', company_origin: 'External'} ON MATCH SET n = {id: 'ext:api:aws_kms', name: 'AWS_KMS', category: 'Key Management', provider: 'Amazon Web Services', company_origin: 'External'};
-MATCH (a {id: 'finpay:sys:customer_kyc'}), (b {id: 'ext:api:uidai_aadhaar'}) MERGE (a)-[r:CALLS]->(b);
 MATCH (a {id: 'vaultly:sys:user_onboarding'}), (b {id: 'ext:api:uidai_aadhaar'}) MERGE (a)-[r:CALLS]->(b);
-MATCH (a {id: 'finpay:sys:finpay_core_ledger'}), (b {id: 'ext:api:stripe'}) MERGE (a)-[r:CALLS]->(b);
 MATCH (a {id: 'vaultly:sys:vault_engine'}), (b {id: 'ext:api:stripe'}) MERGE (a)-[r:CALLS]->(b);
-MATCH (a {id: 'finpay:sys:gatekeeper_auth'}), (b {id: 'ext:api:aws_kms'}) MERGE (a)-[r:CALLS]->(b);
 MATCH (a {id: 'vaultly:sys:pulse_identity'}), (b {id: 'ext:api:aws_kms'}) MERGE (a)-[r:CALLS]->(b);

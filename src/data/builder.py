@@ -6,7 +6,7 @@ Provides:
 - Schema index application across graphs
 """
 
-from typing import Dict, Any, List, Tuple
+from typing import Dict, Any, List, Tuple, Optional
 from pathlib import Path
 import json
 
@@ -26,7 +26,11 @@ from src.data.synthetic_data import (
 )
 
 
-def _convert_dataset_to_cypher(dataset: Dict[str, Any], include_external: bool = False) -> List[str]:
+def _convert_dataset_to_cypher(
+    dataset: Dict[str, Any],
+    include_external: bool = False,
+    company_prefix: Optional[str] = None,
+) -> List[str]:
     """Converts a company dataset dictionary into an ordered list of MERGE Cypher queries."""
     queries: List[str] = []
 
@@ -65,14 +69,15 @@ def _convert_dataset_to_cypher(dataset: Dict[str, Any], include_external: bool =
         for ext_node in shared["external_apis"]:
             queries.append(build_node_merge_cypher("ExternalAPI", ext_node.model_dump()))
         for ext_rel in shared["relationships"]:
-            queries.append(
-                build_relationship_merge_cypher(
-                    source_id=ext_rel.source_id,
-                    target_id=ext_rel.target_id,
-                    rel_type=ext_rel.rel_type,
-                    properties=ext_rel.properties,
+            if company_prefix is None or ext_rel.source_id.startswith(f"{company_prefix}:"):
+                queries.append(
+                    build_relationship_merge_cypher(
+                        source_id=ext_rel.source_id,
+                        target_id=ext_rel.target_id,
+                        rel_type=ext_rel.rel_type,
+                        properties=ext_rel.properties,
+                    )
                 )
-            )
 
     return queries
 
@@ -82,13 +87,13 @@ def generate_graph_cypher_scripts() -> Dict[str, List[str]]:
     finpay_data = get_finpay_dataset()
     vaultly_data = get_vaultly_dataset()
 
-    # 1. FinPay isolated graph
+    # 1. FinPay isolated graph (only FinPay nodes and calls)
     finpay_queries = list(INDEX_QUERIES)
-    finpay_queries.extend(_convert_dataset_to_cypher(finpay_data, include_external=True))
+    finpay_queries.extend(_convert_dataset_to_cypher(finpay_data, include_external=True, company_prefix="finpay"))
 
-    # 2. Vaultly isolated graph
+    # 2. Vaultly isolated graph (only Vaultly nodes and calls)
     vaultly_queries = list(INDEX_QUERIES)
-    vaultly_queries.extend(_convert_dataset_to_cypher(vaultly_data, include_external=True))
+    vaultly_queries.extend(_convert_dataset_to_cypher(vaultly_data, include_external=True, company_prefix="vaultly"))
 
     # 3. Merged brain graph (Both companies + cross-company bridge edges)
     merged_queries = list(INDEX_QUERIES)

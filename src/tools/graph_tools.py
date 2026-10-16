@@ -190,10 +190,11 @@ class GraphAgentTools:
         graph = self._get_graph()
         subgraph = Subgraph()
 
-        domain_filter = "AND toLower(p1.domain) CONTAINS toLower($domain)" if domain else ""
+        domain_filter = "AND (toLower(p1.domain) CONTAINS toLower($domain) OR toLower(p2.domain) CONTAINS toLower($domain))" if domain else ""
         query = f"""
-            MATCH (p1:Policy)-[r:CONFLICTS_WITH]->(p2:Policy)
-            WHERE coalesce(r.status, 'ACTIVE') <> 'RESOLVED'
+            MATCH (p1:Policy)-[r:CONFLICTS_WITH]-(p2:Policy)
+            WHERE p1.id < p2.id
+              AND coalesce(r.status, 'ACTIVE') <> 'RESOLVED'
               AND coalesce(p1.status, 'ACTIVE') <> 'DEPRECATED'
               AND coalesce(p2.status, 'ACTIVE') <> 'DEPRECATED'
             {domain_filter}
@@ -202,16 +203,17 @@ class GraphAgentTools:
             RETURN p1.id, p1.name, p1.domain, p1.description, p1.effective_date, p1.authority_level, p1.source, p1.company_origin,
                    p2.id, p2.name, p2.domain, p2.description, p2.effective_date, p2.authority_level, p2.source, p2.company_origin,
                    r.severity, r.reason,
-                   doc1.id, doc1.title, doc1.url, doc1.excerpt,
-                   doc2.id, doc2.title, doc2.url, doc2.excerpt
+                   collect(DISTINCT {{id: doc1.id, title: doc1.title, url: doc1.url, excerpt: doc1.excerpt}}) as docs1,
+                   collect(DISTINCT {{id: doc2.id, title: doc2.title, url: doc2.url, excerpt: doc2.excerpt}}) as docs2
         """
         res = graph.query(query, {"domain": domain or ""})
 
         if not res.result_set:
             # Check if any conflicts were resolved via M&A mutations
             resolved_res = graph.query("""
-                MATCH (p1:Policy)-[r:CONFLICTS_WITH]->(p2:Policy)
-                WHERE r.status = 'RESOLVED' OR p1.status = 'DEPRECATED' OR p2.status = 'DEPRECATED'
+                MATCH (p1:Policy)-[r:CONFLICTS_WITH]-(p2:Policy)
+                WHERE p1.id < p2.id
+                  AND (r.status = 'RESOLVED' OR p1.status = 'DEPRECATED' OR p2.status = 'DEPRECATED')
                 RETURN count(r) as resolved_count
             """)
             resolved_count = resolved_res.result_set[0][0] if resolved_res.result_set else 0
@@ -233,17 +235,22 @@ class GraphAgentTools:
                 p1_id, p1_name, p1_domain, p1_desc, p1_eff, p1_auth, p1_src, p1_co,
                 p2_id, p2_name, p2_domain, p2_desc, p2_eff, p2_auth, p2_src, p2_co,
                 sev, reason,
-                d1_id, d1_title, d1_url, d1_exc,
-                d2_id, d2_title, d2_url, d2_exc,
+                docs1, docs2,
             ) = row
+
+            docs1 = [d for d in docs1 if d.get("id")]
+            docs2 = [d for d in docs2 if d.get("id")]
+
+            d1 = docs1[0] if docs1 else {}
+            d2 = docs2[0] if docs2 else {}
 
             conflicts.append({
                 "policy_a": {"id": p1_id, "name": p1_name, "company": p1_co, "date": p1_eff, "authority": p1_auth, "desc": p1_desc},
                 "policy_b": {"id": p2_id, "name": p2_name, "company": p2_co, "date": p2_eff, "authority": p2_auth, "desc": p2_desc},
                 "severity": sev,
                 "reason": reason,
-                "source_doc_a": {"id": d1_id, "title": d1_title, "url": d1_url},
-                "source_doc_b": {"id": d2_id, "title": d2_title, "url": d2_url},
+                "source_doc_a": d1,
+                "source_doc_b": d2,
             })
 
             # Add to subgraph
@@ -251,20 +258,25 @@ class GraphAgentTools:
             subgraph.add_node(p2_id, p2_name, "Policy", p2_co, {"domain": p2_domain, "effective_date": p2_eff, "authority": p2_auth})
             subgraph.add_edge(p1_id, p2_id, "CONFLICTS_WITH", {"severity": sev, "reason": reason})
 
-            if d1_id:
-                subgraph.add_node(d1_id, d1_title, "Document", p1_co, {"url": d1_url})
-                subgraph.add_edge(p1_id, d1_id, "DERIVED_FROM")
-            if d2_id:
-                subgraph.add_node(d2_id, d2_title, "Document", p2_co, {"url": d2_url})
-                subgraph.add_edge(p2_id, d2_id, "DERIVED_FROM")
+            for d in docs1:
+                subgraph.add_node(d["id"], d["title"], "Document", p1_co, {"url": d.get("url")})
+                subgraph.add_edge(p1_id, d["id"], "DERIVED_FROM")
+            for d in docs2:
+                subgraph.add_node(d["id"], d["title"], "Document", p2_co, {"url": d.get("url")})
+                subgraph.add_edge(p2_id, d["id"], "DERIVED_FROM")
+
+            d1_title = d1.get("title") or p1_src
+            d1_url = d1.get("url") or "#"
+            d2_title = d2.get("title") or p2_src
+            d2_url = d2.get("url") or "#"
 
             text_lines.append(
                 f"#### Conflict #{idx}: {p1_name} vs. {p2_name} `[{sev}]`\n"
                 f"- **Domain**: `{p1_domain}`\n"
                 f"- **{p1_co} Rule** ({p1_eff}, {p1_auth}): *\"{p1_desc}\"*\n"
-                f"  - Source Document: [{d1_title or p1_src}]({d1_url or '#'})\n"
+                f"  - Source Document: [{d1_title}]({d1_url})\n"
                 f"- **{p2_co} Rule** ({p2_eff}, {p2_auth}): *\"{p2_desc}\"*\n"
-                f"  - Source Document: [{d2_title or p2_src}]({d2_url or '#'})\n"
+                f"  - Source Document: [{d2_title}]({d2_url})\n"
                 f"- **Conflict Reason**: {reason}\n"
             )
 
@@ -281,7 +293,8 @@ class GraphAgentTools:
         subgraph = Subgraph()
 
         query = """
-            MATCH (s1:System)-[r:REDUNDANT_WITH]->(s2:System)
+            MATCH (s1:System)-[r:REDUNDANT_WITH]-(s2:System)
+            WHERE s1.id < s2.id
             OPTIONAL MATCH (p1:Person)-[:OWNS]->(s1)
             OPTIONAL MATCH (p2:Person)-[:OWNS]->(s2)
             OPTIONAL MATCH (s1)-[:CALLS]->(ext:ExternalAPI)<-[:CALLS]-(s2)
@@ -366,18 +379,19 @@ class GraphAgentTools:
         query = """
             MATCH (s:System)
             WHERE toLower(s.name) = toLower($name) OR toLower(s.id) CONTAINS toLower($name)
+            WITH s LIMIT 1
             OPTIONAL MATCH (s)-[:GOVERNED_BY]->(d:Decision)
-            OPTIONAL MATCH (d)-[r_conf:CONFLICTS_WITH]->(d_conflict:Decision)
+            OPTIONAL MATCH (d)-[r_conf:CONFLICTS_WITH]-(dc:Decision)
             OPTIONAL MATCH (d)-[:DERIVED_FROM]->(doc:Document)
             OPTIONAL MATCH (d)-[:DERIVED_FROM]->(tkt:Ticket)
-            OPTIONAL MATCH (d_conflict)-[:DERIVED_FROM]->(c_doc:Document)
+            OPTIONAL MATCH (dc)-[:DERIVED_FROM]->(cdoc:Document)
             RETURN s.id, s.name, s.domain, s.company_origin, s.tech,
                    d.id, d.summary, d.date, d.effective_date, d.authority_level, d.status, d.source, d.company_origin,
-                   d_conflict.id, d_conflict.summary, d_conflict.date, d_conflict.effective_date, d_conflict.authority_level, d_conflict.source, d_conflict.company_origin, d_conflict.status,
+                   dc.id, dc.summary, dc.date, dc.effective_date, dc.authority_level, dc.source, dc.company_origin, dc.status,
                    r_conf.status, r_conf.resolution_note,
-                   doc.id, doc.title, doc.url,
-                   tkt.id, tkt.title, tkt.external_id,
-                   c_doc.id, c_doc.title, c_doc.url
+                   collect(DISTINCT {id: doc.id, title: doc.title, url: doc.url}) as docs,
+                   collect(DISTINCT {id: tkt.id, title: tkt.title, external_id: tkt.external_id}) as tkts,
+                   collect(DISTINCT {id: cdoc.id, title: cdoc.title, url: cdoc.url}) as cdocs
         """
         res = graph.query(query, {"name": system_name})
 
@@ -395,57 +409,113 @@ class GraphAgentTools:
 
         text_lines = [f"### Decision Lineage & Conflict Trace for **{s_name}** ({s_co})\n"]
 
+        # Aggregate per decision to eliminate Cartesian row explosion
+        decisions: Dict[str, Dict[str, Any]] = {}
         for row in res.result_set:
             (
                 _, _, _, _, _,
                 d_id, d_summary, d_date, d_eff, d_auth, d_status, d_src, d_co,
                 dc_id, dc_summary, dc_date, dc_eff, dc_auth, dc_src, dc_co, dc_status,
                 rc_status, rc_note,
-                doc_id, doc_title, doc_url,
-                tkt_id, tkt_title, tkt_ext,
-                cdoc_id, cdoc_title, cdoc_url,
+                docs, tkts, cdocs,
             ) = row
 
-            if d_id:
-                subgraph.add_node(d_id, d_summary[:30] + "...", "Decision", d_co or s_co, {"summary": d_summary, "date": d_date, "authority": d_auth, "status": d_status})
-                subgraph.add_edge(s_id, d_id, "GOVERNED_BY")
-                status_label = f"`{d_status}`" if d_status else "`ACTIVE`"
-                text_lines.append(
-                    f"#### Governing Decision: *\"{d_summary}\"*\n"
-                    f"- **Effective Date**: {d_eff or d_date} | **Authority**: {d_auth} | **Status**: {status_label}\n"
-                    f"- **Source Citation**: `{d_src}`\n"
+            if not d_id:
+                continue
+
+            if d_id not in decisions:
+                decisions[d_id] = {
+                    "id": d_id,
+                    "summary": d_summary,
+                    "date": d_date,
+                    "effective_date": d_eff,
+                    "authority": d_auth,
+                    "status": d_status,
+                    "source": d_src,
+                    "company": d_co or s_co,
+                    "docs": [d for d in docs if d.get("id")],
+                    "tickets": [t for t in tkts if t.get("id")],
+                    "conflicts": [],
+                }
+
+            if dc_id and not any(c["id"] == dc_id for c in decisions[d_id]["conflicts"]):
+                decisions[d_id]["conflicts"].append({
+                    "id": dc_id,
+                    "summary": dc_summary,
+                    "date": dc_date,
+                    "effective_date": dc_eff,
+                    "authority": dc_auth,
+                    "source": dc_src,
+                    "company": dc_co,
+                    "status": dc_status,
+                    "rc_status": rc_status,
+                    "rc_note": rc_note,
+                    "cdocs": [cd for cd in cdocs if cd.get("id")],
+                })
+
+        for d_id, d_info in decisions.items():
+            subgraph.add_node(
+                d_id,
+                d_info["summary"][:30] + "...",
+                "Decision",
+                d_info["company"],
+                {
+                    "summary": d_info["summary"],
+                    "date": d_info["date"],
+                    "authority": d_info["authority"],
+                    "status": d_info["status"],
+                },
+            )
+            subgraph.add_edge(s_id, d_id, "GOVERNED_BY")
+            status_label = f"`{d_info['status']}`" if d_info["status"] else "`ACTIVE`"
+            text_lines.append(
+                f"#### Governing Decision: *\"{d_info['summary']}\"*\n"
+                f"- **Effective Date**: {d_info['effective_date'] or d_info['date']} | **Authority**: {d_info['authority']} | **Status**: {status_label}\n"
+                f"- **Source Citation**: `{d_info['source']}`\n"
+            )
+
+            for doc in d_info["docs"]:
+                subgraph.add_node(doc["id"], doc["title"], "Document", d_info["company"], {"url": doc["url"]})
+                subgraph.add_edge(d_id, doc["id"], "DERIVED_FROM")
+                text_lines.append(f"  - Derived from RFC: [{doc['title']}]({doc['url']})\n")
+
+            for tkt in d_info["tickets"]:
+                subgraph.add_node(tkt["id"], tkt["title"], "Ticket", d_info["company"], {"external_id": tkt.get("external_id")})
+                subgraph.add_edge(d_id, tkt["id"], "DERIVED_FROM")
+                text_lines.append(f"  - Associated Ticket: `{tkt.get('external_id') or tkt['id']}` ({tkt['title']})\n")
+
+            for conf in d_info["conflicts"]:
+                dc_id = conf["id"]
+                subgraph.add_node(
+                    dc_id,
+                    conf["summary"][:30] + "...",
+                    "Decision",
+                    conf["company"],
+                    {
+                        "summary": conf["summary"],
+                        "date": conf["date"],
+                        "authority": conf["authority"],
+                        "status": conf["status"],
+                    },
                 )
-
-                if doc_id:
-                    subgraph.add_node(doc_id, doc_title, "Document", d_co, {"url": doc_url})
-                    subgraph.add_edge(d_id, doc_id, "DERIVED_FROM")
-                    text_lines.append(f"  - Derived from RFC: [{doc_title}]({doc_url})\n")
-
-                if tkt_id:
-                    subgraph.add_node(tkt_id, tkt_title, "Ticket", d_co, {"external_id": tkt_ext})
-                    subgraph.add_edge(d_id, tkt_id, "DERIVED_FROM")
-                    text_lines.append(f"  - Associated Ticket: `{tkt_ext or tkt_id}` ({tkt_title})\n")
-
-                if dc_id:
-                    subgraph.add_node(dc_id, dc_summary[:30] + "...", "Decision", dc_co, {"summary": dc_summary, "date": dc_date, "authority": dc_auth, "status": dc_status})
-                    subgraph.add_edge(d_id, dc_id, "CONFLICTS_WITH")
-                    if rc_status == "RESOLVED" or d_status == "DEPRECATED" or dc_status == "DEPRECATED":
-                        text_lines.append(
-                            f"\n> [RESOLVED] **Resolved M&A Conflict with {dc_co} Decision (Superceded):**\n"
-                            f"> - Former: *\"{dc_summary}\"* (`{dc_status or 'DEPRECATED'}`)\n"
-                            f"> - Resolution: {rc_note or 'Superceded by M&A Live Mutation Accord'}\n"
-                        )
-                    else:
-                        text_lines.append(
-                            f"\n> [!] **Direct M&A Conflict with {dc_co} Decision:**\n"
-                            f"> - *\"{dc_summary}\"*\n"
-                            f"> - Authority: {dc_auth} | Effective: {dc_eff or dc_date}\n"
-                            f"> - Source Citation: `{dc_src}`\n"
-                        )
-                    if cdoc_id:
-                        subgraph.add_node(cdoc_id, cdoc_title, "Document", dc_co, {"url": cdoc_url})
-                        subgraph.add_edge(dc_id, cdoc_id, "DERIVED_FROM")
-                        text_lines.append(f"> - Counterpart RFC: [{cdoc_title}]({cdoc_url})\n")
+                subgraph.add_edge(d_id, dc_id, "CONFLICTS_WITH")
+                if conf["rc_status"] == "RESOLVED" or d_info["status"] == "DEPRECATED" or conf["status"] == "DEPRECATED":
+                    text_lines.append(
+                        f"\n> [RESOLVED] **Resolved M&A Conflict with {conf['company']} Decision (Superceded):**\n"
+                        f"> - Former: *\"{conf['summary']}\"* (`{conf['status'] or 'DEPRECATED'}`)\n"
+                        f"> - Resolution: {conf['rc_note'] or 'Superceded by M&A Live Mutation Accord'}\n"
+                    )
+                else:
+                    text_lines.append(
+                        f"\n> [!] **Direct M&A Conflict with {conf['company']} Decision:**\n"
+                        f"> - *\"{conf['summary']}\"*\n"
+                        f"> - Authority: {conf['authority']} | Effective: {conf['effective_date'] or conf['date']}\n"
+                        f"> - Source Citation: `{conf['source']}`\n"
+                    )
+                for cdoc in conf["cdocs"]:
+                    subgraph.add_node(cdoc["id"], cdoc["title"], "Document", conf["company"], {"url": cdoc["url"]})
+                    subgraph.add_edge(dc_id, cdoc["id"], "DERIVED_FROM")
+                    text_lines.append(f"> - Counterpart RFC: [{cdoc['title']}]({cdoc['url']})\n")
 
         return ToolResult(
             tool_name="trace_decision_lineage",

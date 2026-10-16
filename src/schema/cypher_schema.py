@@ -61,6 +61,12 @@ def sanitize_cypher_query(query: str, max_hops: int = 4, default_limit: int = 25
     return cleaned
 
 
+def escape_cypher_value(val: Any) -> str:
+    """Escapes backslashes and single quotes in string values for safe Cypher query interpolation."""
+    s = val if isinstance(val, str) else str(val)
+    return s.replace("\\", "\\\\").replace("'", "\\'")
+
+
 def build_node_merge_cypher(label: str, properties: Dict[str, Any]) -> str:
     """Builds a MERGE Cypher statement for a node using its unique ID."""
     if label not in ALLOWED_LABELS:
@@ -69,7 +75,7 @@ def build_node_merge_cypher(label: str, properties: Dict[str, Any]) -> str:
     props_strings = []
     for k, v in properties.items():
         if isinstance(v, str):
-            escaped = v.replace("'", "\\'")
+            escaped = escape_cypher_value(v)
             props_strings.append(f"{k}: '{escaped}'")
         elif isinstance(v, (int, float)):
             props_strings.append(f"{k}: {v}")
@@ -78,11 +84,11 @@ def build_node_merge_cypher(label: str, properties: Dict[str, Any]) -> str:
         elif v is None:
             continue
         else:
-            escaped = str(v).replace("'", "\\'")
+            escaped = escape_cypher_value(v)
             props_strings.append(f"{k}: '{escaped}'")
 
     props_repr = "{" + ", ".join(props_strings) + "}"
-    node_id = properties.get("id", "").replace("'", "\\'")
+    node_id = escape_cypher_value(properties.get("id", ""))
     return f"MERGE (n:{label} {{id: '{node_id}'}}) ON CREATE SET n = {props_repr} ON MATCH SET n = {props_repr}"
 
 
@@ -96,22 +102,22 @@ def build_relationship_merge_cypher(
     if rel_type not in ALLOWED_RELATIONSHIPS:
         raise ValueError(f"Relationship '{rel_type}' not in allowed relationships: {ALLOWED_RELATIONSHIPS}")
 
-    src_escaped = source_id.replace("'", "\\'")
-    tgt_escaped = target_id.replace("'", "\\'")
+    src_escaped = escape_cypher_value(source_id)
+    tgt_escaped = escape_cypher_value(target_id)
 
     prop_assigns = ""
     if properties:
         items = []
         for k, v in properties.items():
             if isinstance(v, str):
-                escaped = v.replace("'", "\\'")
+                escaped = escape_cypher_value(v)
                 items.append(f"r.{k} = '{escaped}'")
             elif isinstance(v, (int, float)):
                 items.append(f"r.{k} = {v}")
             elif isinstance(v, bool):
                 items.append(f"r.{k} = {str(v).lower()}")
             else:
-                escaped = str(v).replace("'", "\\'")
+                escaped = escape_cypher_value(v)
                 items.append(f"r.{k} = '{escaped}'")
         if items:
             prop_assigns = " ON CREATE SET " + ", ".join(items) + " ON MATCH SET " + ", ".join(items)
