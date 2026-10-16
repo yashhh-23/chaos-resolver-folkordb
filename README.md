@@ -63,7 +63,7 @@ chaos-resolver-folkordb/
 │   └── components/NodeInspectorModal.tsx # Node attribute inspector drawer
 └── tests/
     ├── test_schema_and_dataset.py  # Schema, edge integrity, collision guards (9 tests)
-    ├── test_auto_linker.py         # Vector embeddings & auto-linker resolution (4 tests)
+    ├── test_auto_linker.py         # Vector embeddings & auto-linker resolution (5 tests)
     ├── test_agent_tools.py         # Agent tools, MCP schema, WCC, /api/chat & FastAPI endpoints (10 tests)
     └── test_live_mutations.py      # Live graph mutations, Cypher MERGE/SET updates (4 tests)
 
@@ -227,9 +227,9 @@ python -m src.cli mutate reset-demo
 ```bash
 pytest tests/ -v
 ```
-All **27 unit & integration tests** pass across:
+All **28 unit & integration tests** pass across:
 - Multigraph schema integrity, node collisions, and bridge relations (`test_schema_and_dataset.py` - 9 tests)
-- Dense 384-dim normalized vector embeddings and hybrid auto-linker (`test_auto_linker.py` - 4 tests)
+- Dense 384-dim normalized vector embeddings, hybrid auto-linker, and threshold filtering (`test_auto_linker.py` - 5 tests)
 - Deterministic M&A agent tools, WCC, MCP schemas, /api/chat, & FastAPI endpoints (`test_agent_tools.py` - 10 tests)
 - Live graph mutations, transactional Cypher updates, and Track 03 real-time state maintenance (`test_live_mutations.py` - 4 tests)
 

@@ -233,7 +233,7 @@ class AutoLinkerEngine:
 
                 is_same_domain = fp_domain and vl_domain and fp_domain.lower() == vl_domain.lower()
 
-                if is_same_domain or sim >= self.threshold:
+                if is_same_domain and sim >= self.threshold:
                     severity = "CRITICAL" if "auth" in fp_domain.lower() else "HIGH"
                     reason = f"Domain mismatch in {fp_domain}: '{fp_name}' vs '{vl_name}' (semantic overlap: {sim:.2f})"
 
@@ -360,7 +360,8 @@ class AutoLinkerEngine:
                 has_log_kw = ("30-day" in fp_lower or "purge" in fp_lower) and ("180" in vl_lower or "retention" in vl_lower)
                 has_mesh_kw = ("mtls" in fp_lower) and ("bearer" in vl_lower or "api" in vl_lower)
 
-                if has_graph_domain_match or has_auth_kw or has_log_kw or has_mesh_kw or sim >= self.threshold:
+                has_conflict_signal = has_graph_domain_match or has_auth_kw or has_log_kw or has_mesh_kw
+                if sim >= self.threshold and has_conflict_signal:
                     if "Authentication" in shared_domains or has_auth_kw:
                         severity = "CRITICAL"
                         domain = "Session Security"

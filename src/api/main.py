@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 from src.config import settings
 from src.utils.logger import logger
 from src.db.client import db_client
-from src.tools.graph_tools import agent_tools, ToolResult, Subgraph
+from src.tools.graph_tools import agent_tools, ToolResult, Subgraph, fetch_visualization_subgraph
 from src.tools.mcp_server import MCP_TOOL_DEFINITIONS, execute_tool
 from src.tools.llm_agent import llm_agent
 
@@ -180,48 +180,7 @@ def chat_with_agent(req: ChatRequest):
 @app.get("/api/graph/subgraph", response_model=Subgraph)
 def get_graph_visualization(graph: Optional[str] = None):
     """Returns nodes and edges for visual rendering in Next.js react-force-graph-2d."""
-    target_graph = graph or settings.graph_merged
-    g = db_client.get_graph(target_graph)
-    subgraph = Subgraph()
-
-    # Query nodes
-    node_query = """
-        MATCH (n)
-        RETURN n.id as id,
-               coalesce(n.name, n.title, n.summary, n.id) as display_name,
-               labels(n)[0] as label,
-               coalesce(n.company_origin, 'External') as company,
-               properties(n) as props
-        LIMIT 100
-    """
-    node_res = g.query(node_query)
-    for row in node_res.result_set:
-        subgraph.add_node(
-            node_id=row[0],
-            name=row[1],
-            label=row[2],
-            company=row[3],
-            props=row[4] if isinstance(row[4], dict) else {},
-        )
-
-    # Query relationships (guaranteeing both source and target exist in node set)
-    valid_node_ids = {n.id for n in subgraph.nodes}
-    rel_query = """
-        MATCH (a)-[r]->(b)
-        RETURN a.id, b.id, type(r), properties(r)
-        LIMIT 150
-    """
-    rel_res = g.query(rel_query)
-    for row in rel_res.result_set:
-        if row[0] in valid_node_ids and row[1] in valid_node_ids:
-            subgraph.add_edge(
-                source=row[0],
-                target=row[1],
-                rel_type=row[2],
-                props=row[3] if isinstance(row[3], dict) else {},
-            )
-
-    return subgraph
+    return fetch_visualization_subgraph(graph or settings.graph_merged)
 
 
 # Live Mutation Endpoints (Phase 5 - Track 03: Keeping Knowledge Current)

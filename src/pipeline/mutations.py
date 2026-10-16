@@ -76,9 +76,26 @@ class LiveMutationEngine:
                 pol.authority_level = 'Joint M&A Executive Committee',
                 pol.description = $pol_desc,
                 pol.source = 'M&A Resolution Order #2026-01'
+            ON MATCH SET
+                pol.name = 'Unified M&A Adaptive Session Policy',
+                pol.domain = 'Authentication',
+                pol.company_origin = 'Unified',
+                pol.status = 'ACTIVE',
+                pol.effective_date = $effective_date,
+                pol.authority_level = 'Joint M&A Executive Committee',
+                pol.description = $pol_desc,
+                pol.source = 'M&A Resolution Order #2026-01'
 
             MERGE (dec:Decision {id: $dec_id})
             ON CREATE SET
+                dec.summary = $dec_summary,
+                dec.date = $effective_date,
+                dec.effective_date = $effective_date,
+                dec.authority_level = 'Joint M&A Architecture Committee',
+                dec.status = 'ACTIVE',
+                dec.company_origin = 'Unified',
+                dec.source = 'Executive Order EO-2026-04'
+            ON MATCH SET
                 dec.summary = $dec_summary,
                 dec.date = $effective_date,
                 dec.effective_date = $effective_date,
@@ -190,9 +207,26 @@ class LiveMutationEngine:
                 pol.authority_level = 'Joint Legal & CISO Council',
                 pol.description = $pol_desc,
                 pol.source = 'Joint Compliance Accord 2026'
+            ON MATCH SET
+                pol.name = 'Unified M&A Tiered Log & Audit Retention Policy',
+                pol.domain = 'Data Retention',
+                pol.company_origin = 'Unified',
+                pol.status = 'ACTIVE',
+                pol.effective_date = $effective_date,
+                pol.authority_level = 'Joint Legal & CISO Council',
+                pol.description = $pol_desc,
+                pol.source = 'Joint Compliance Accord 2026'
 
             MERGE (dec:Decision {id: $dec_id})
             ON CREATE SET
+                dec.summary = $dec_summary,
+                dec.date = $effective_date,
+                dec.effective_date = $effective_date,
+                dec.authority_level = 'Joint Legal & CISO Council',
+                dec.status = 'ACTIVE',
+                dec.company_origin = 'Unified',
+                dec.source = 'Joint Compliance Accord 2026'
+            ON MATCH SET
                 dec.summary = $dec_summary,
                 dec.date = $effective_date,
                 dec.effective_date = $effective_date,
@@ -256,50 +290,64 @@ class LiveMutationEngine:
         subgraph = Subgraph()
         unified_id = "unified:team:identity_secarch"
 
-        merge_query = """
+        # Step 1: Create or update Unified Team node
+        merge_team_query = """
             MERGE (ut:Team {id: $u_id})
             ON CREATE SET
                 ut.name = $u_name,
                 ut.charter = 'Consolidated Identity, Access Management, and PCI-DSS Compliance across FinPay and Vaultly',
                 ut.company_origin = 'Unified',
+                ut.status = 'ACTIVE',
                 ut.merged_at = $timestamp
-
-            WITH ut
-            MATCH (p1:Person)-[:MEMBER_OF]->(t1:Team {id: $t1_id})
-            MERGE (p1)-[:MEMBER_OF]->(ut)
-
-            WITH ut
-            MATCH (p2:Person)-[:MEMBER_OF]->(t2:Team {id: $t2_id})
-            MERGE (p2)-[:MEMBER_OF]->(ut)
-
-            WITH ut
-            MATCH (t1:Team {id: $t1_id})-[r1:OWNS]->(s1:System)
-            MERGE (ut)-[:OWNS]->(s1)
-
-            WITH ut
-            MATCH (t2:Team {id: $t2_id})-[r2:OWNS]->(s2:System)
-            MERGE (ut)-[:OWNS]->(s2)
+            ON MATCH SET
+                ut.name = $u_name,
+                ut.charter = 'Consolidated Identity, Access Management, and PCI-DSS Compliance across FinPay and Vaultly',
+                ut.company_origin = 'Unified',
+                ut.status = 'ACTIVE',
+                ut.merged_at = $timestamp
         """
-        graph.query(
-            merge_query,
-            {
-                "u_id": unified_id,
-                "u_name": unified_name,
-                "t1_id": team_a_id,
-                "t2_id": team_b_id,
-                "timestamp": now_ts,
-            },
-        )
+        graph.query(merge_team_query, {"u_id": unified_id, "u_name": unified_name, "timestamp": now_ts})
 
-        subgraph.add_node(unified_id, unified_name, "Team", "Unified")
-
-        # Query actual team members dynamically from FalkorDB
-        members_query = """
-            MATCH (p:Person)-[:MEMBER_OF]->(t:Team)
+        # Step 2: Migrate team members to unified team and delete old membership edges
+        migrate_members_query = """
+            MATCH (ut:Team {id: $u_id})
+            MATCH (p:Person)-[r:MEMBER_OF]->(t:Team)
             WHERE t.id IN [$t1_id, $t2_id]
+            MERGE (p)-[:MEMBER_OF]->(ut)
+            DELETE r
+        """
+        graph.query(migrate_members_query, {"u_id": unified_id, "t1_id": team_a_id, "t2_id": team_b_id})
+
+        # Step 3: Migrate system ownership to unified team and delete old ownership edges
+        migrate_ownership_query = """
+            MATCH (ut:Team {id: $u_id})
+            MATCH (t:Team)-[r:OWNS]->(s:System)
+            WHERE t.id IN [$t1_id, $t2_id]
+            MERGE (ut)-[:OWNS]->(s)
+            DELETE r
+        """
+        graph.query(migrate_ownership_query, {"u_id": unified_id, "t1_id": team_a_id, "t2_id": team_b_id})
+
+        # Step 4: Mark old teams as MERGED and establish SUPERSEDES relationship
+        deprecate_teams_query = """
+            MATCH (ut:Team {id: $u_id})
+            MATCH (t:Team)
+            WHERE t.id IN [$t1_id, $t2_id]
+            SET t.status = 'MERGED',
+                t.merged_into = $u_id,
+                t.merged_at = $timestamp
+            MERGE (ut)-[:SUPERSEDES]->(t)
+        """
+        graph.query(deprecate_teams_query, {"u_id": unified_id, "t1_id": team_a_id, "t2_id": team_b_id, "timestamp": now_ts})
+
+        subgraph.add_node(unified_id, unified_name, "Team", "Unified", {"status": "ACTIVE"})
+
+        # Query actual team members dynamically from FalkorDB under unified team
+        members_query = """
+            MATCH (p:Person)-[:MEMBER_OF]->(ut:Team {id: $u_id})
             RETURN DISTINCT p.id, p.name, p.company_origin
         """
-        members_res = graph.query(members_query, {"t1_id": team_a_id, "t2_id": team_b_id})
+        members_res = graph.query(members_query, {"u_id": unified_id})
         found_members = []
 
         if members_res.result_set:
@@ -315,6 +363,26 @@ class LiveMutationEngine:
             subgraph.add_edge("finpay:person:aarav_mehta", unified_id, "MEMBER_OF")
             subgraph.add_edge("vaultly:person:diya_nair", unified_id, "MEMBER_OF")
             found_members = ["Aarav Mehta", "Diya Nair"]
+
+        # Add owned systems and superseded teams to subgraph
+        owned_systems_query = """
+            MATCH (ut:Team {id: $u_id})-[:OWNS]->(s:System)
+            RETURN DISTINCT s.id, coalesce(s.name, s.id), s.company_origin
+        """
+        sys_res = graph.query(owned_systems_query, {"u_id": unified_id})
+        for row in (sys_res.result_set or []):
+            subgraph.add_node(row[0], row[1], "System", row[2] or "Unified")
+            subgraph.add_edge(unified_id, row[0], "OWNS")
+
+        old_teams_query = """
+            MATCH (t:Team)
+            WHERE t.id IN [$t1_id, $t2_id]
+            RETURN t.id, coalesce(t.name, t.id), t.company_origin
+        """
+        old_teams_res = graph.query(old_teams_query, {"t1_id": team_a_id, "t2_id": team_b_id})
+        for row in (old_teams_res.result_set or []):
+            subgraph.add_node(row[0], row[1], "Team", row[2] or "Unified", {"status": "MERGED"})
+            subgraph.add_edge(unified_id, row[0], "SUPERSEDES")
 
         logger.info(
             f"[{self.graph_name}] Live Mutation: Merged teams {team_a_id} and {team_b_id} "
@@ -354,40 +422,8 @@ class LiveMutationEngine:
         }
 
         if include_subgraph:
-            subgraph = Subgraph()
-            g = self._get_graph()
-            node_res = g.query("""
-                MATCH (n)
-                RETURN n.id as id,
-                       coalesce(n.name, n.title, n.summary, n.id) as display_name,
-                       labels(n)[0] as label,
-                       coalesce(n.company_origin, 'External') as company,
-                       properties(n) as props
-                LIMIT 100
-            """)
-            for row in node_res.result_set:
-                subgraph.add_node(
-                    node_id=row[0],
-                    name=row[1],
-                    label=row[2],
-                    company=row[3],
-                    props=row[4] if isinstance(row[4], dict) else {},
-                )
-
-            valid_node_ids = {n.id for n in subgraph.nodes}
-            rel_res = g.query("""
-                MATCH (a)-[r]->(b)
-                RETURN a.id, b.id, type(r), properties(r)
-                LIMIT 150
-            """)
-            for row in rel_res.result_set:
-                if row[0] in valid_node_ids and row[1] in valid_node_ids:
-                    subgraph.add_edge(
-                        source=row[0],
-                        target=row[1],
-                        rel_type=row[2],
-                        props=row[3] if isinstance(row[3], dict) else {},
-                    )
+            from src.tools.graph_tools import fetch_visualization_subgraph
+            subgraph = fetch_visualization_subgraph(self.graph_name)
             result["subgraph"] = subgraph.model_dump()
 
         return result

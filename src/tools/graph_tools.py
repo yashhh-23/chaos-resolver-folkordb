@@ -781,3 +781,57 @@ class GraphAgentTools:
 
 agent_tools = GraphAgentTools()
 
+
+def fetch_visualization_subgraph(
+    graph_name: Optional[str] = None,
+    node_limit: int = 100,
+    rel_limit: int = 150,
+) -> Subgraph:
+    """Returns nodes and edges for visual rendering, stripping bulky embedding vectors to optimize payload size."""
+    target_graph = graph_name or settings.graph_merged
+    g = db_client.get_graph(target_graph)
+    subgraph = Subgraph()
+
+    # Query nodes
+    node_query = f"""
+        MATCH (n)
+        RETURN n.id as id,
+               coalesce(n.name, n.title, n.summary, n.id) as display_name,
+               labels(n)[0] as label,
+               coalesce(n.company_origin, 'External') as company,
+               properties(n) as props
+        LIMIT {node_limit}
+    """
+    node_res = g.query(node_query)
+    for row in node_res.result_set:
+        props = dict(row[4]) if isinstance(row[4], dict) else {}
+        props.pop("embedding", None)
+        subgraph.add_node(
+            node_id=row[0],
+            name=row[1],
+            label=row[2],
+            company=row[3],
+            props=props,
+        )
+
+    # Query relationships (guaranteeing both source and target exist in node set)
+    valid_node_ids = {n.id for n in subgraph.nodes}
+    rel_query = f"""
+        MATCH (a)-[r]->(b)
+        RETURN a.id, b.id, type(r), properties(r)
+        LIMIT {rel_limit}
+    """
+    rel_res = g.query(rel_query)
+    for row in rel_res.result_set:
+        if row[0] in valid_node_ids and row[1] in valid_node_ids:
+            props = dict(row[3]) if isinstance(row[3], dict) else {}
+            props.pop("embedding", None)
+            subgraph.add_edge(
+                source=row[0],
+                target=row[1],
+                rel_type=row[2],
+                props=props,
+            )
+
+    return subgraph
+

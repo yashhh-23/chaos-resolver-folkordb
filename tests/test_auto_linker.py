@@ -49,3 +49,21 @@ def test_external_api_hybrid_overlap_boost():
 
     assert boosted > base_sim
     assert boosted >= 0.82
+
+
+def test_auto_linker_threshold_filtering():
+    """Validates that a strict threshold (0.99) properly filters lower-similarity conflicts."""
+    from src.config import settings
+    from src.db.client import db_client
+
+    db_client.connect()
+    strict_engine = AutoLinkerEngine(threshold=0.99)
+    strict_policies = strict_engine.detect_policy_conflicts(settings.graph_merged)
+    strict_decisions = strict_engine.detect_decision_conflicts(settings.graph_merged)
+
+    # At 0.99, sub-0.99 conflicts are filtered out
+    assert len(strict_policies) == 0
+    assert len(strict_decisions) <= 1
+    if strict_decisions:
+        assert strict_decisions[0]["domain"] == "Data Retention"
+
