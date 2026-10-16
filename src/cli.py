@@ -163,6 +163,36 @@ def main():
     link_parser.add_argument("--graph", default=settings.graph_merged, help="Target graph to link")
     link_parser.add_argument("--threshold", type=float, default=0.82, help="Similarity threshold (default 0.82)")
 
+    # serve subcommand
+    serve_parser = subparsers.add_parser("serve", help="Start FastAPI REST backend server")
+    serve_parser.add_argument("--port", type=int, default=8000, help="Port to bind (default 8000)")
+    serve_parser.add_argument("--host", default="0.0.0.0", help="Host interface (default 0.0.0.0)")
+
+    # tool subcommand
+    tool_parser = subparsers.add_parser("tool", help="Run one of the 5 deterministic M&A agent tools")
+    tool_sub = tool_parser.add_subparsers(dest="tool_action")
+
+    # tool: find-expert
+    t_exp = tool_sub.add_parser("find-expert", help="Find subject-matter expert counterpart")
+    t_exp.add_argument("--topic", required=True, help="Topic/domain to search")
+    t_exp.add_argument("--company", default="Vaultly", help="Target company")
+
+    # tool: conflicts
+    t_conf = tool_sub.add_parser("conflicts", help="Detect policy & compliance conflicts")
+    t_conf.add_argument("--domain", default=None, help="Optional domain filter")
+
+    # tool: redundant
+    tool_sub.add_parser("redundant", help="Find redundant systems clusters")
+
+    # tool: lineage
+    t_lin = tool_sub.add_parser("lineage", help="Trace system decision and documentation lineage")
+    t_lin.add_argument("--system", required=True, help="System name to trace")
+
+    # tool: warm-intro
+    t_intro = tool_sub.add_parser("warm-intro", help="Find shortest warm introduction path between two people")
+    t_intro.add_argument("--person-a", required=True, help="Person A name")
+    t_intro.add_argument("--person-b", required=True, help="Person B name")
+
     args = parser.parse_args()
 
     if args.subcommand == "query":
@@ -173,10 +203,33 @@ def main():
         from src.pipeline.auto_linker import AutoLinkerEngine
         engine = AutoLinkerEngine(threshold=args.threshold)
         engine.run_pipeline(args.graph)
+    elif args.subcommand == "serve":
+        import uvicorn
+        console.print(f"[bold green]Starting OrgBridge AI API Server on http://{args.host}:{args.port}[/bold green]")
+        uvicorn.run("src.api.main:app", host=args.host, port=args.port, reload=True)
+    elif args.subcommand == "tool":
+        from src.tools.graph_tools import agent_tools
+        if args.tool_action == "find-expert":
+            res = agent_tools.find_counterpart_expert(topic=args.topic, company=args.company)
+            console.print(Panel(res.text_answer, title="Tool: find_counterpart_expert", border_style="green"))
+        elif args.tool_action == "conflicts":
+            res = agent_tools.detect_policy_conflicts(domain=args.domain)
+            console.print(Panel(res.text_answer, title="Tool: detect_policy_conflicts", border_style="yellow"))
+        elif args.tool_action == "redundant":
+            res = agent_tools.find_redundant_systems()
+            console.print(Panel(res.text_answer, title="Tool: find_redundant_systems", border_style="cyan"))
+        elif args.tool_action == "lineage":
+            res = agent_tools.trace_decision_lineage(system_name=args.system)
+            console.print(Panel(res.text_answer, title="Tool: trace_decision_lineage", border_style="magenta"))
+        elif args.tool_action == "warm-intro":
+            res = agent_tools.get_warm_intro_path(person_a=args.person_a, person_b=args.person_b)
+            console.print(Panel(res.text_answer, title="Tool: get_warm_intro_path", border_style="blue"))
+        else:
+            tool_parser.print_help()
     else:
         interactive_repl(getattr(args, "graph", settings.graph_merged))
 
 
-
 if __name__ == "__main__":
     main()
+

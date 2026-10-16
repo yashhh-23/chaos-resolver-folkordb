@@ -46,12 +46,19 @@ chaos-resolver-folkordb/
 │   │   ├── synthetic_data.py       # Realistic FinPay + Vaultly M&A dilemma dataset
 │   │   ├── builder.py              # Multigraph Cypher statement compiler & exporter
 │   │   └── seed.py                 # CLI seeder for FalkorDB & artifact generator
-│   ├── cli.py                      # Interactive FalkorDB REPL & CLI tool
+│   ├── tools/
+│   │   ├── graph_tools.py          # 5 Deterministic agent tools returning text + visual Subgraph JSON
+│   │   └── mcp_server.py           # Model Context Protocol (MCP) tool schema & dispatcher
+│   ├── api/
+│   │   └── main.py                 # FastAPI backend server with CORS & visual subgraph endpoints
+│   ├── cli.py                      # Interactive FalkorDB REPL, CLI tool runner, and uvicorn launcher
 │   └── utils/
 │       └── logger.py               # Standardized application logging
 └── tests/
     ├── test_schema_and_dataset.py  # Schema, edge integrity, collision guards (9 tests)
-    └── test_auto_linker.py         # Vector embeddings & auto-linker resolution (4 tests)
+    ├── test_auto_linker.py         # Vector embeddings & auto-linker resolution (4 tests)
+    └── test_agent_tools.py         # Agent tools, MCP schema, & FastAPI endpoints (8 tests)
+
 
 ```
 
@@ -141,9 +148,36 @@ Or run interactively inside the CLI:
 python -m src.cli auto-link --graph merged_brain
 ```
 
-### 5. Run Test Suite
+### 5. Run Phase 3 Deterministic Agent Tools (CLI / MCP / REST)
+Execute any of the 5 core tools with human-readable evidence and visual Subgraph JSON:
+```bash
+# 1. SME Expert Discovery (PageRank + authored RFCs)
+python -m src.cli tool find-expert --topic "Authentication" --company Vaultly
+
+# 2. Policy & Compliance Conflict Detection
+python -m src.cli tool conflicts --domain "Data Retention"
+
+# 3. Redundant Microservices Clusters
+python -m src.cli tool redundant
+
+# 4. Decision Lineage & Conflict Tracing
+python -m src.cli tool lineage --system "Gatekeeper-Auth"
+
+# 5. Warm Introduction Shortest Path Traversal
+python -m src.cli tool warm-intro --person-a "Aarav Mehta" --person-b "Diya Nair"
+```
+
+### 6. Launch FastAPI REST & Subgraph Visualization Server
+```bash
+python -m src.cli serve --port 8000
+```
+Interactive Swagger API documentation will be available at:  
+👉 **http://localhost:8000/docs**
+
+### 7. Run Test Suite
 ```bash
 pytest tests/ -v
 ```
-All **13 unit tests** pass verifying schema constraints, edge referential integrity, collision protection, query bounding, vector embeddings, and hybrid resolution.
+All **21 unit & integration tests** pass across schema rules, referential integrity, collision guards, embeddings normalization, hybrid auto-linker, the 5 agent tools, MCP schemas, and FastAPI endpoints.
+
 
