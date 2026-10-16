@@ -190,9 +190,12 @@ class GraphAgentTools:
         graph = self._get_graph()
         subgraph = Subgraph()
 
-        domain_filter = "WHERE toLower(p1.domain) CONTAINS toLower($domain)" if domain else ""
+        domain_filter = "AND toLower(p1.domain) CONTAINS toLower($domain)" if domain else ""
         query = f"""
             MATCH (p1:Policy)-[r:CONFLICTS_WITH]->(p2:Policy)
+            WHERE coalesce(r.status, 'ACTIVE') <> 'RESOLVED'
+              AND coalesce(p1.status, 'ACTIVE') <> 'DEPRECATED'
+              AND coalesce(p2.status, 'ACTIVE') <> 'DEPRECATED'
             {domain_filter}
             OPTIONAL MATCH (p1)-[:DERIVED_FROM]->(doc1:Document)
             OPTIONAL MATCH (p2)-[:DERIVED_FROM]->(doc2:Document)
@@ -203,6 +206,24 @@ class GraphAgentTools:
                    doc2.id, doc2.title, doc2.url, doc2.excerpt
         """
         res = graph.query(query, {"domain": domain or ""})
+
+        if not res.result_set:
+            # Check if any conflicts were resolved via M&A mutations
+            resolved_res = graph.query("""
+                MATCH (p1:Policy)-[r:CONFLICTS_WITH]->(p2:Policy)
+                WHERE r.status = 'RESOLVED' OR p1.status = 'DEPRECATED' OR p2.status = 'DEPRECATED'
+                RETURN count(r) as resolved_count
+            """)
+            resolved_count = resolved_res.result_set[0][0] if resolved_res.result_set else 0
+            info = f" ({resolved_count} conflict(s) previously resolved via M&A mutations)." if resolved_count > 0 else "."
+            domain_label = f" for domain '{domain}'" if domain else ""
+
+            return ToolResult(
+                tool_name="detect_policy_conflicts",
+                text_answer=f"### M&A Policy & Compliance Conflicts: 0 Active Conflicts Detected{domain_label}\n\nAll policy domains are currently compliant, aligned, or superseded by unified standards{info}",
+                details={"conflicts": []},
+                subgraph=subgraph,
+            )
 
         conflicts = []
         text_lines = [f"### M&A Policy & Compliance Conflicts Detected ({len(res.result_set)} Found)\n"]
@@ -346,13 +367,14 @@ class GraphAgentTools:
             MATCH (s:System)
             WHERE toLower(s.name) = toLower($name) OR toLower(s.id) CONTAINS toLower($name)
             OPTIONAL MATCH (s)-[:GOVERNED_BY]->(d:Decision)
-            OPTIONAL MATCH (d)-[:CONFLICTS_WITH]->(d_conflict:Decision)
+            OPTIONAL MATCH (d)-[r_conf:CONFLICTS_WITH]->(d_conflict:Decision)
             OPTIONAL MATCH (d)-[:DERIVED_FROM]->(doc:Document)
             OPTIONAL MATCH (d)-[:DERIVED_FROM]->(tkt:Ticket)
             OPTIONAL MATCH (d_conflict)-[:DERIVED_FROM]->(c_doc:Document)
             RETURN s.id, s.name, s.domain, s.company_origin, s.tech,
                    d.id, d.summary, d.date, d.effective_date, d.authority_level, d.status, d.source, d.company_origin,
-                   d_conflict.id, d_conflict.summary, d_conflict.date, d_conflict.effective_date, d_conflict.authority_level, d_conflict.source, d_conflict.company_origin,
+                   d_conflict.id, d_conflict.summary, d_conflict.date, d_conflict.effective_date, d_conflict.authority_level, d_conflict.source, d_conflict.company_origin, d_conflict.status,
+                   r_conf.status, r_conf.resolution_note,
                    doc.id, doc.title, doc.url,
                    tkt.id, tkt.title, tkt.external_id,
                    c_doc.id, c_doc.title, c_doc.url
@@ -377,18 +399,20 @@ class GraphAgentTools:
             (
                 _, _, _, _, _,
                 d_id, d_summary, d_date, d_eff, d_auth, d_status, d_src, d_co,
-                dc_id, dc_summary, dc_date, dc_eff, dc_auth, dc_src, dc_co,
+                dc_id, dc_summary, dc_date, dc_eff, dc_auth, dc_src, dc_co, dc_status,
+                rc_status, rc_note,
                 doc_id, doc_title, doc_url,
                 tkt_id, tkt_title, tkt_ext,
                 cdoc_id, cdoc_title, cdoc_url,
             ) = row
 
             if d_id:
-                subgraph.add_node(d_id, d_summary[:30] + "...", "Decision", d_co or s_co, {"summary": d_summary, "date": d_date, "authority": d_auth})
+                subgraph.add_node(d_id, d_summary[:30] + "...", "Decision", d_co or s_co, {"summary": d_summary, "date": d_date, "authority": d_auth, "status": d_status})
                 subgraph.add_edge(s_id, d_id, "GOVERNED_BY")
+                status_label = f"`{d_status}`" if d_status else "`ACTIVE`"
                 text_lines.append(
                     f"#### Governing Decision: *\"{d_summary}\"*\n"
-                    f"- **Effective Date**: {d_eff or d_date} | **Authority**: {d_auth} | **Status**: `{d_status}`\n"
+                    f"- **Effective Date**: {d_eff or d_date} | **Authority**: {d_auth} | **Status**: {status_label}\n"
                     f"- **Source Citation**: `{d_src}`\n"
                 )
 
@@ -403,15 +427,21 @@ class GraphAgentTools:
                     text_lines.append(f"  - Associated Ticket: `{tkt_ext or tkt_id}` ({tkt_title})\n")
 
                 if dc_id:
-                    subgraph.add_node(dc_id, dc_summary[:30] + "...", "Decision", dc_co, {"summary": dc_summary, "date": dc_date, "authority": dc_auth})
+                    subgraph.add_node(dc_id, dc_summary[:30] + "...", "Decision", dc_co, {"summary": dc_summary, "date": dc_date, "authority": dc_auth, "status": dc_status})
                     subgraph.add_edge(d_id, dc_id, "CONFLICTS_WITH")
-                    text_lines.append(
-                        f"\n> [!] **Direct M&A Conflict with {dc_co} Decision:**\n"
-                        f"> - *\"{dc_summary}\"*\n"
-
-                        f"> - Authority: {dc_auth} | Effective: {dc_eff or dc_date}\n"
-                        f"> - Source Citation: `{dc_src}`\n"
-                    )
+                    if rc_status == "RESOLVED" or d_status == "DEPRECATED" or dc_status == "DEPRECATED":
+                        text_lines.append(
+                            f"\n> [RESOLVED] **Resolved M&A Conflict with {dc_co} Decision (Superceded):**\n"
+                            f"> - Former: *\"{dc_summary}\"* (`{dc_status or 'DEPRECATED'}`)\n"
+                            f"> - Resolution: {rc_note or 'Superceded by M&A Live Mutation Accord'}\n"
+                        )
+                    else:
+                        text_lines.append(
+                            f"\n> [!] **Direct M&A Conflict with {dc_co} Decision:**\n"
+                            f"> - *\"{dc_summary}\"*\n"
+                            f"> - Authority: {dc_auth} | Effective: {dc_eff or dc_date}\n"
+                            f"> - Source Citation: `{dc_src}`\n"
+                        )
                     if cdoc_id:
                         subgraph.add_node(cdoc_id, cdoc_title, "Document", dc_co, {"url": cdoc_url})
                         subgraph.add_edge(dc_id, cdoc_id, "DERIVED_FROM")
@@ -443,13 +473,12 @@ class GraphAgentTools:
                    [n in nds | coalesce(n.name, n.id)] as node_names,
                    [n in nds | labels(n)[0]] as node_labels,
                    [n in nds | coalesce(n.company_origin, 'External')] as node_companies,
-                   [r in rls | type(r)] as rel_types,
+                   [r in rls | [startNode(r).id, endNode(r).id, type(r)]] as rel_triplets,
                    h as hops
             ORDER BY h ASC
             LIMIT 1
         """
         res = graph.query(query, {"p_a": person_a, "p_b": person_b})
-
 
         if not res.result_set:
             return ToolResult(
@@ -460,30 +489,37 @@ class GraphAgentTools:
             )
 
         row = res.result_set[0]
-        node_ids, node_names, node_labels, node_companies, edge_types, hops = row
+        node_ids, node_names, node_labels, node_companies, rel_triplets, hops = row
 
-        # Add nodes and edges to subgraph
+        # Add nodes to subgraph
         for i in range(len(node_ids)):
             subgraph.add_node(node_ids[i], node_names[i], node_labels[i], node_companies[i])
 
-        for i in range(len(edge_types)):
-            subgraph.add_edge(node_ids[i], node_ids[i+1], edge_types[i])
-
-
         chain_steps = []
-        for i in range(len(edge_types)):
-            chain_steps.append(f"**{node_names[i]}** -`[:{edge_types[i]}]`-> **{node_names[i+1]}**")
+        for i, triplet in enumerate(rel_triplets):
+            r_src, r_dst, r_type = triplet[0], triplet[1], triplet[2]
+            # Add true directed relationship in FalkorDB graph schema
+            subgraph.add_edge(r_src, r_dst, r_type)
+
+            curr_id = node_ids[i]
+            curr_name = node_names[i]
+            next_name = node_names[i+1]
+
+            if r_src == curr_id:
+                chain_steps.append(f"**{curr_name}** -`[:{r_type}]`-> **{next_name}**")
+            else:
+                chain_steps.append(f"**{curr_name}** <-`[:{r_type}]`- **{next_name}**")
 
         start_name = node_names[0]
         end_name = node_names[-1]
+        pitch_context = f"({node_names[1]} and {node_names[-2]})" if len(node_names) > 2 else f"({node_names[1]})"
 
         text_answer = (
             f"### Warm Introduction Path: **{start_name}** -> **{end_name}** ({hops} Hops)\n\n"
             f"Fastest organizational bridge discovered across companies:\n\n"
-
             + "\n".join(f"{idx+1}. {step}" for idx, step in enumerate(chain_steps))
             + f"\n\n**Recommended Intro Pitch:**\n"
-            f"> \"Hi {end_name}, I'm working with {start_name}. We noticed an architecture overlap between our services ({node_names[1]} and {node_names[-2]}), and would love to align on unified patterns.\""
+            f"> \"Hi {end_name}, I'm working with {start_name}. We noticed an architecture overlap between our services {pitch_context}, and would love to align on unified patterns.\""
         )
 
         return ToolResult(

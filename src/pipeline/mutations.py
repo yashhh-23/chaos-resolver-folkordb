@@ -33,7 +33,7 @@ class LiveMutationEngine:
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         subgraph = Subgraph()
 
-        # Step 1: Update conflicting policies to DEPRECATED
+        # Step 1: Update conflicting policies and decisions to DEPRECATED
         deprecate_query = """
             MATCH (p1:Policy {id: 'finpay:pol:session_security'})-[r:CONFLICTS_WITH]->(p2:Policy {id: 'vaultly:pol:session_continuity'})
             SET p1.status = 'DEPRECATED',
@@ -43,6 +43,16 @@ class LiveMutationEngine:
                 r.resolution_note = 'Superceded by Unified M&A Hybrid Session Standard'
         """
         graph.query(deprecate_query, {"timestamp": now_str})
+
+        deprecate_dec_query = """
+            MATCH (d1:Decision {id: 'finpay:dec:jwt_15m'})-[rd:CONFLICTS_WITH]->(d2:Decision {id: 'vaultly:dec:session_7d'})
+            SET d1.status = 'DEPRECATED',
+                d2.status = 'DEPRECATED',
+                rd.status = 'RESOLVED',
+                rd.resolved_at = $timestamp,
+                rd.resolution_note = 'Superceded by Unified 30-min JWT Decision'
+        """
+        graph.query(deprecate_dec_query, {"timestamp": now_str})
 
         # Step 2: Create Unified M&A Policy and Decision
         create_unified_query = """
@@ -71,22 +81,29 @@ class LiveMutationEngine:
         """
         graph.query(create_unified_query)
 
-        # Step 3: Re-link Gatekeeper-Auth and Pulse-Identity to the new Unified Policy
+        # Step 3: Re-link Gatekeeper-Auth and Pulse-Identity to the new Unified Policy and Decision
         relink_query = """
             MATCH (pol:Policy {id: 'unified:pol:hybrid_session_auth'})
+            MATCH (dec:Decision {id: 'unified:dec:adaptive_jwt_30m'})
             MATCH (s1:System {id: 'finpay:sys:gatekeeper_auth'})
             MATCH (s2:System {id: 'vaultly:sys:pulse_identity'})
             MERGE (s1)-[:GOVERNED_BY]->(pol)
             MERGE (s2)-[:GOVERNED_BY]->(pol)
+            MERGE (s1)-[:GOVERNED_BY]->(dec)
+            MERGE (s2)-[:GOVERNED_BY]->(dec)
         """
         graph.query(relink_query)
 
         # Build Subgraph of resolved state
         subgraph.add_node("unified:pol:hybrid_session_auth", "Unified M&A Adaptive Session Policy", "Policy", "Unified", {"status": "ACTIVE"})
+        subgraph.add_node("unified:dec:adaptive_jwt_30m", "Adopt 30-min JWT Decision", "Decision", "Unified", {"status": "ACTIVE"})
         subgraph.add_node("finpay:sys:gatekeeper_auth", "Gatekeeper-Auth", "System", "FinPay")
         subgraph.add_node("vaultly:sys:pulse_identity", "Pulse-Identity", "System", "Vaultly")
         subgraph.add_edge("finpay:sys:gatekeeper_auth", "unified:pol:hybrid_session_auth", "GOVERNED_BY")
         subgraph.add_edge("vaultly:sys:pulse_identity", "unified:pol:hybrid_session_auth", "GOVERNED_BY")
+        subgraph.add_edge("finpay:sys:gatekeeper_auth", "unified:dec:adaptive_jwt_30m", "GOVERNED_BY")
+        subgraph.add_edge("vaultly:sys:pulse_identity", "unified:dec:adaptive_jwt_30m", "GOVERNED_BY")
+        subgraph.add_edge("unified:pol:hybrid_session_auth", "unified:dec:adaptive_jwt_30m", "SUPERSEDES")
 
         logger.info(f"[{self.graph_name}] Live Mutation: Resolved Auth Token Conflict in FalkorDB.")
 
@@ -123,6 +140,16 @@ class LiveMutationEngine:
         """
         graph.query(deprecate_query, {"timestamp": now_str})
 
+        deprecate_dec_query = """
+            MATCH (d1:Decision {id: 'finpay:dec:log_purge_30d'})-[rd:CONFLICTS_WITH]->(d2:Decision {id: 'vaultly:dec:log_retention_180d'})
+            SET d1.status = 'DEPRECATED',
+                d2.status = 'DEPRECATED',
+                rd.status = 'RESOLVED',
+                rd.resolved_at = $timestamp,
+                rd.resolution_note = 'Superceded by Tiered 90-Day Audit Standard'
+        """
+        graph.query(deprecate_dec_query, {"timestamp": now_str})
+
         create_unified_query = """
             MERGE (pol:Policy {id: 'unified:pol:tiered_retention_90d'})
             ON CREATE SET
@@ -135,18 +162,36 @@ class LiveMutationEngine:
                 pol.description = '90-day cold encrypted storage for financial audit trails with automated 30-day purge for non-audit debug telemetry',
                 pol.source = 'Joint Compliance Accord 2026'
 
+            MERGE (dec:Decision {id: 'unified:dec:tiered_retention_90d'})
+            ON CREATE SET
+                dec.summary = 'Adopt 90-day tiered retention with cold storage for audit logs',
+                dec.date = '2026-10-17',
+                dec.effective_date = '2026-10-17',
+                dec.authority_level = 'Joint Legal & CISO Council',
+                dec.status = 'ACTIVE',
+                dec.company_origin = 'Unified',
+                dec.source = 'Joint Compliance Accord 2026'
+
+            MERGE (pol)-[:SUPERSEDES]->(dec)
+
             MERGE (s1:System {id: 'finpay:sys:finpay_mesh_gateway'})
             MERGE (s2:System {id: 'vaultly:sys:vaultly_public_api'})
             MERGE (s1)-[:GOVERNED_BY]->(pol)
             MERGE (s2)-[:GOVERNED_BY]->(pol)
+            MERGE (s1)-[:GOVERNED_BY]->(dec)
+            MERGE (s2)-[:GOVERNED_BY]->(dec)
         """
         graph.query(create_unified_query)
 
         subgraph.add_node("unified:pol:tiered_retention_90d", "Tiered Log & Audit Policy", "Policy", "Unified", {"status": "ACTIVE"})
+        subgraph.add_node("unified:dec:tiered_retention_90d", "Tiered 90-Day Retention Decision", "Decision", "Unified", {"status": "ACTIVE"})
         subgraph.add_node("finpay:sys:finpay_mesh_gateway", "FinPay-Mesh-Gateway", "System", "FinPay")
         subgraph.add_node("vaultly:sys:vaultly_public_api", "Vaultly-Public-API", "System", "Vaultly")
         subgraph.add_edge("finpay:sys:finpay_mesh_gateway", "unified:pol:tiered_retention_90d", "GOVERNED_BY")
         subgraph.add_edge("vaultly:sys:vaultly_public_api", "unified:pol:tiered_retention_90d", "GOVERNED_BY")
+        subgraph.add_edge("finpay:sys:finpay_mesh_gateway", "unified:dec:tiered_retention_90d", "GOVERNED_BY")
+        subgraph.add_edge("vaultly:sys:vaultly_public_api", "unified:dec:tiered_retention_90d", "GOVERNED_BY")
+        subgraph.add_edge("unified:pol:tiered_retention_90d", "unified:dec:tiered_retention_90d", "SUPERSEDES")
 
         logger.info(f"[{self.graph_name}] Live Mutation: Resolved Data Retention Conflict in FalkorDB.")
 
