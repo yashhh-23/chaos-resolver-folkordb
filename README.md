@@ -174,10 +174,25 @@ python -m src.cli serve --port 8000
 Interactive Swagger API documentation will be available at:  
 👉 **http://localhost:8000/docs**
 
-### 7. Run Test Suite
+### 7. Launch Next.js "War Room" Dashboard (Phase 4)
+In a separate terminal, launch the split-screen interactive dashboard:
+```bash
+npm run dev --prefix frontend
+```
+Open your browser at:  
+👉 **http://localhost:3000**
+
+Features:
+- **Left Panel**: Agent Chat with one-click M&A Crisis Prompts for hackathon judges, source citations (Slack thread, RFC doc, Jira ticket), and active path triggers.
+- **Right Panel**: Interactive `react-force-graph-2d` live canvas color-coded by tenant (FinPay Blue, Vaultly Orange, Conflict Red, Redundancy Green).
+- **Active Subgraph Highlighting**: Automatically isolates, zooms, and pulses the exact nodes and relationships traversed when an agent question is answered.
+- **Node Inspector Drawer**: Click any node on the canvas to inspect its full properties, architecture domain, and tenant provenance.
+
+### 8. Run Test Suite
 ```bash
 pytest tests/ -v
 ```
 All **21 unit & integration tests** pass across schema rules, referential integrity, collision guards, embeddings normalization, hybrid auto-linker, the 5 agent tools, MCP schemas, and FastAPI endpoints.
+
 
 
