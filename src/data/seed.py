@@ -15,7 +15,6 @@ from src.db.client import db_client
 from src.data.builder import (
     generate_graph_cypher_scripts,
     export_cypher_files,
-    export_json_dataset,
 )
 
 
@@ -96,9 +95,8 @@ def main():
     )
     args = parser.parse_args()
 
-    # Always generate artifacts/cypher and artifacts/dataset.json
+    # Always generate artifacts/cypher
     export_cypher_files()
-    export_json_dataset()
 
     if args.export_only:
         logger.info("Export-only mode finished successfully. Artifacts created in 'artifacts/' directory.")

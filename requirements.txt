@@ -11,13 +11,10 @@ python-dotenv>=1.0.0
 httpx>=0.27.0
 
 # LLM & Agent Tooling (Phases 2-3)
-groq>=0.18.0
 openai>=1.40.0
 
 # CLI & Visualization Tools
 rich>=13.0.0
-typer>=0.12.0
 
 # Testing & Quality Assurance
 pytest>=8.0.0
-pytest-asyncio>=0.23.0

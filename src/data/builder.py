@@ -8,7 +8,6 @@ Provides:
 
 from typing import Dict, Any, List, Tuple, Optional
 from pathlib import Path
-import json
 
 from src.config import settings
 from src.utils.logger import logger
@@ -151,26 +150,3 @@ def export_cypher_files(output_dir: str = "artifacts/cypher") -> List[str]:
 
     return created_files
 
-
-def export_json_dataset(output_file: str = "artifacts/dataset.json") -> str:
-    """Exports structured M&A dataset to JSON for UI / API usage."""
-    finpay = get_finpay_dataset()
-    vaultly = get_vaultly_dataset()
-    shared = get_shared_external_dependencies()
-    bridges = get_ma_bridge_relationships()
-
-    payload = {
-        "finpay": {k: [item.model_dump() for item in v] for k, v in finpay.items()},
-        "vaultly": {k: [item.model_dump() for item in v] for k, v in vaultly.items()},
-        "shared_external": {
-            "external_apis": [api.model_dump() for api in shared["external_apis"]],
-            "relationships": [rel.model_dump() for rel in shared["relationships"]],
-        },
-        "bridge_relationships": [rel.model_dump() for rel in bridges],
-    }
-
-    out_path = Path(output_file)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    logger.info(f"Exported dataset JSON: {output_file}")
-    return str(out_path)

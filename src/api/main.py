@@ -5,7 +5,7 @@ and live visual subgraph payloads for the Next.js War Room dashboard.
 """
 
 from typing import Optional, Dict, Any
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 

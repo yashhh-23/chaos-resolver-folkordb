@@ -19,7 +19,6 @@ class Settings(BaseSettings):
     graph_merged: str = "merged_brain"
 
     # LLM Settings (for Phase 2 & 3)
-    groq_api_key: Optional[str] = None
     openai_api_key: Optional[str] = None
 
     # General

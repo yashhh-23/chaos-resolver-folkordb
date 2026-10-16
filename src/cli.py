@@ -4,7 +4,6 @@ Provides an easy-to-use Cypher shell for querying finpay_graph, vaultly_graph,
 and merged_brain, viewing schemas, and running M&A graph operations.
 """
 
-import sys
 import argparse
 from typing import Optional
 from rich.console import Console

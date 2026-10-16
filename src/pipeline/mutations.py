@@ -7,7 +7,7 @@ Executes transactional Cypher MERGE, SET, and DELETE operations in FalkorDB to:
 3. Keep real-time knowledge current as M&A integration progresses.
 """
 
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 from datetime import datetime
 from src.config import settings
 from src.utils.logger import logger
@@ -33,6 +33,10 @@ class LiveMutationEngine:
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         subgraph = Subgraph()
 
+        pol_desc = f"Adaptive {compromise_ttl_minutes}-min active session with hardware biometric refresh token (PCI-DSS compliant + frictionless mobile UX)"
+        dec_summary = f"Adopt {compromise_ttl_minutes}-minute JWT token lifetime with biometric refresh on mobile"
+        dec_note = f"Superceded by Unified {compromise_ttl_minutes}-min JWT Decision"
+
         # Step 1: Update conflicting policies and decisions to DEPRECATED
         deprecate_query = """
             MATCH (p1:Policy {id: 'finpay:pol:session_security'})-[r:CONFLICTS_WITH]->(p2:Policy {id: 'vaultly:pol:session_continuity'})
@@ -50,9 +54,9 @@ class LiveMutationEngine:
                 d2.status = 'DEPRECATED',
                 rd.status = 'RESOLVED',
                 rd.resolved_at = $timestamp,
-                rd.resolution_note = 'Superceded by Unified 30-min JWT Decision'
+                rd.resolution_note = $resolution_note
         """
-        graph.query(deprecate_dec_query, {"timestamp": now_str})
+        graph.query(deprecate_dec_query, {"timestamp": now_str, "resolution_note": dec_note})
 
         # Step 2: Create Unified M&A Policy and Decision
         create_unified_query = """
@@ -64,12 +68,12 @@ class LiveMutationEngine:
                 pol.status = 'ACTIVE',
                 pol.effective_date = '2026-10-17',
                 pol.authority_level = 'Joint M&A Executive Committee',
-                pol.description = 'Adaptive 30-min active session with hardware biometric refresh token (PCI-DSS compliant + frictionless mobile UX)',
+                pol.description = $pol_desc,
                 pol.source = 'M&A Resolution Order #2026-01'
 
             MERGE (dec:Decision {id: 'unified:dec:adaptive_jwt_30m'})
             ON CREATE SET
-                dec.summary = 'Adopt 30-minute JWT token lifetime with biometric refresh on mobile',
+                dec.summary = $dec_summary,
                 dec.date = '2026-10-17',
                 dec.effective_date = '2026-10-17',
                 dec.authority_level = 'Joint M&A Architecture Committee',
@@ -79,7 +83,7 @@ class LiveMutationEngine:
 
             MERGE (pol)-[:SUPERSEDES]->(dec)
         """
-        graph.query(create_unified_query)
+        graph.query(create_unified_query, {"pol_desc": pol_desc, "dec_summary": dec_summary})
 
         # Step 3: Re-link Gatekeeper-Auth and Pulse-Identity to the new Unified Policy and Decision
         relink_query = """
@@ -130,15 +134,19 @@ class LiveMutationEngine:
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         subgraph = Subgraph()
 
+        pol_desc = f"{retention_days}-day cold encrypted storage for financial audit trails with automated 30-day purge for non-audit debug telemetry"
+        dec_summary = f"Adopt {retention_days}-day tiered retention with cold storage for audit logs"
+        res_note = f"Superceded by Tiered {retention_days}-Day Audit Standard"
+
         deprecate_query = """
             MATCH (p1:Policy {id: 'finpay:pol:retention_compliance'})-[r:CONFLICTS_WITH]->(p2:Policy {id: 'vaultly:pol:forensic_audit_retention'})
             SET p1.status = 'DEPRECATED',
                 p2.status = 'DEPRECATED',
                 r.status = 'RESOLVED',
                 r.resolved_at = $timestamp,
-                r.resolution_note = 'Superceded by Tiered 90-Day Audit Archival Standard'
+                r.resolution_note = $resolution_note
         """
-        graph.query(deprecate_query, {"timestamp": now_str})
+        graph.query(deprecate_query, {"timestamp": now_str, "resolution_note": res_note})
 
         deprecate_dec_query = """
             MATCH (d1:Decision {id: 'finpay:dec:log_purge_30d'})-[rd:CONFLICTS_WITH]->(d2:Decision {id: 'vaultly:dec:log_retention_180d'})
@@ -146,9 +154,9 @@ class LiveMutationEngine:
                 d2.status = 'DEPRECATED',
                 rd.status = 'RESOLVED',
                 rd.resolved_at = $timestamp,
-                rd.resolution_note = 'Superceded by Tiered 90-Day Audit Standard'
+                rd.resolution_note = $resolution_note
         """
-        graph.query(deprecate_dec_query, {"timestamp": now_str})
+        graph.query(deprecate_dec_query, {"timestamp": now_str, "resolution_note": res_note})
 
         create_unified_query = """
             MERGE (pol:Policy {id: 'unified:pol:tiered_retention_90d'})
@@ -159,12 +167,12 @@ class LiveMutationEngine:
                 pol.status = 'ACTIVE',
                 pol.effective_date = '2026-10-17',
                 pol.authority_level = 'Joint Legal & CISO Council',
-                pol.description = '90-day cold encrypted storage for financial audit trails with automated 30-day purge for non-audit debug telemetry',
+                pol.description = $pol_desc,
                 pol.source = 'Joint Compliance Accord 2026'
 
             MERGE (dec:Decision {id: 'unified:dec:tiered_retention_90d'})
             ON CREATE SET
-                dec.summary = 'Adopt 90-day tiered retention with cold storage for audit logs',
+                dec.summary = $dec_summary,
                 dec.date = '2026-10-17',
                 dec.effective_date = '2026-10-17',
                 dec.authority_level = 'Joint Legal & CISO Council',
@@ -181,10 +189,10 @@ class LiveMutationEngine:
             MERGE (s1)-[:GOVERNED_BY]->(dec)
             MERGE (s2)-[:GOVERNED_BY]->(dec)
         """
-        graph.query(create_unified_query)
+        graph.query(create_unified_query, {"pol_desc": pol_desc, "dec_summary": dec_summary})
 
         subgraph.add_node("unified:pol:tiered_retention_90d", "Tiered Log & Audit Policy", "Policy", "Unified", {"status": "ACTIVE"})
-        subgraph.add_node("unified:dec:tiered_retention_90d", "Tiered 90-Day Retention Decision", "Decision", "Unified", {"status": "ACTIVE"})
+        subgraph.add_node("unified:dec:tiered_retention_90d", f"Tiered {retention_days}-Day Retention Decision", "Decision", "Unified", {"status": "ACTIVE"})
         subgraph.add_node("finpay:sys:finpay_mesh_gateway", "FinPay-Mesh-Gateway", "System", "FinPay")
         subgraph.add_node("vaultly:sys:vaultly_public_api", "Vaultly-Public-API", "System", "Vaultly")
         subgraph.add_edge("finpay:sys:finpay_mesh_gateway", "unified:pol:tiered_retention_90d", "GOVERNED_BY")
@@ -202,7 +210,7 @@ class LiveMutationEngine:
             "unified_policy_id": "unified:pol:tiered_retention_90d",
             "resolved_conflict": "FinPay 30-day purge vs Vaultly 180-day forensic audit",
             "resolution_summary": (
-                "Created 'Unified M&A Tiered Log & Audit Retention Policy' (90-day encrypted cold storage). "
+                f"Created 'Unified M&A Tiered Log & Audit Retention Policy' ({retention_days}-day encrypted cold storage). "
                 "Marked conflicting policies as DEPRECATED and updated Gateway governance live."
             ),
             "subgraph": subgraph.model_dump(),

@@ -7,7 +7,6 @@ from src.data.synthetic_data import (
 from src.data.builder import (
     generate_graph_cypher_scripts,
     export_cypher_files,
-    export_json_dataset,
 )
 
 __all__ = [
@@ -17,6 +16,5 @@ __all__ = [
     "get_ma_bridge_relationships",
     "generate_graph_cypher_scripts",
     "export_cypher_files",
-    "export_json_dataset",
 ]
 

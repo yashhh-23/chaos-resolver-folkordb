@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { X, ExternalLink, ShieldCheck, Cpu, User, FileText, CheckCircle2 } from "lucide-react";
+import { X, ShieldCheck, Cpu, User, FileText } from "lucide-react";
 import { GraphNode } from "@/lib/api";
 
 interface NodeInspectorModalProps {

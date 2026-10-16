@@ -1,9 +1,8 @@
 """Embeddings service supporting local deterministic embeddings and remote providers (OpenAI)."""
 
-import os
 import math
 import hashlib
-from typing import List, Optional
+from typing import List
 from src.config import settings
 from src.utils.logger import logger
 
@@ -42,10 +41,6 @@ class EmbeddingService:
                 logger.warning(f"OpenAI embedding call failed: {e}. Falling back to local semantic embedder.")
 
         return self._local_semantic_embed(text)
-
-    def embed_batch(self, texts: List[str]) -> List[List[float]]:
-        """Embeds a batch of texts."""
-        return [self.embed_text(t) for t in texts]
 
     def _local_semantic_embed(self, text: str) -> List[float]:
         """Fast, robust, deterministic semantic embedding generator for local operation.

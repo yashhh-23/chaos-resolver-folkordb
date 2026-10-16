@@ -17,7 +17,7 @@ import {
   RotateCcw,
   CheckCircle2,
 } from "lucide-react";
-import { SubgraphData, ToolResponse, callTool, mutateGraph, fetchFullSubgraph } from "@/lib/api";
+import { SubgraphData, ToolResponse, callTool, mutateGraph } from "@/lib/api";
 
 
 export interface Message {
@@ -318,13 +318,8 @@ export default function ChatPanel({
       setMessages((prev) => [...prev, agentMsg]);
 
       // Re-fetch the full updated graph from FalkorDB so main canvas reflects mutations
-      try {
-        const fullData = await fetchFullSubgraph("merged_brain");
-        if (onFullGraphRefresh) {
-          onFullGraphRefresh(fullData);
-        }
-      } catch (refreshErr) {
-        console.warn("Could not refresh full graph after mutation:", refreshErr);
+      if (onFullGraphRefresh) {
+        onFullGraphRefresh();
       }
 
       // Handle active subgraph isolation / highlight

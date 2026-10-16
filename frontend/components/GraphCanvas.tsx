@@ -2,7 +2,7 @@
 
 import React, { useRef, useEffect, useState, useMemo } from "react";
 import dynamic from "next/dynamic";
-import { GraphNode, GraphEdge, SubgraphData } from "@/lib/api";
+import { GraphNode, SubgraphData } from "@/lib/api";
 import { ZoomIn, ZoomOut, Maximize2, Layers, RefreshCw } from "lucide-react";
 
 // Dynamically import ForceGraph2D with ssr disabled
@@ -123,6 +123,13 @@ export default function GraphCanvas({
 
   return (
     <div ref={containerRef} className="relative h-full w-full bg-slate-950 overflow-hidden">
+      {isLoading && (
+        <div className="absolute inset-0 z-20 flex items-center justify-center bg-slate-950/70 backdrop-blur-sm text-slate-300">
+          <RefreshCw className="w-5 h-5 animate-spin mr-2 text-cyan-400" />
+          <span className="text-sm font-medium">Syncing FalkorDB Graph...</span>
+        </div>
+      )}
+
       {/* Top Overlay Legend & Status */}
       <div className="absolute top-4 left-4 z-10 flex flex-wrap gap-2 items-center text-xs bg-slate-900/80 backdrop-blur-md px-3 py-2 rounded-lg border border-slate-800 text-slate-300 shadow-xl">
         <div className="flex items-center gap-1.5">

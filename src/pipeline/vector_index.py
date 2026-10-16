@@ -1,7 +1,6 @@
 """Vector index manager and embedding population pipeline for FalkorDB nodes."""
 
 from typing import List, Dict, Any, Tuple
-from src.config import settings
 from src.utils.logger import logger
 from src.db.client import db_client
 from src.embeddings.service import embedding_service

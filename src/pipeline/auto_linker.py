@@ -8,7 +8,7 @@ Performs Hybrid Vector + Graph Entity Resolution:
    where similarity exceeds the specified threshold (default 0.82).
 """
 
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any
 from src.config import settings
 from src.utils.logger import logger
 from src.db.client import db_client
