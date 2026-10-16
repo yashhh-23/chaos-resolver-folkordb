@@ -21,7 +21,7 @@ When **FinPay** acquired **Vaultly**, engineering and architecture teams inherit
 **OrgBridge AI solves this with FalkorDB**:
 1. **Multigraph Tenancy:** Physical graph isolation (`finpay_graph`, `vaultly_graph`) linked by a unified reasoning graph (`merged_brain`).
 2. **Hybrid Vector + Graph Entity Resolution:** Identifies duplicate systems and policy clashes using dense 384-dim semantic embeddings augmented by shared external API dependencies (`ExternalAPI` UIDAI Aadhaar, Stripe, AWS KMS).
-3. **Deterministic Agent Tools:** Built on native FalkorDB graph algorithms (PageRank for genuine SME influence, Bounded Path Traversal for warm introductions).
+3. **Deterministic Agent Tools:** Graph-powered tools using stored PageRank centrality properties to surface authoritative SMEs and bounded multi-hop path traversal (`[*1..4]`) to find shortest warm introduction chains.
 4. **Keeping Knowledge Current (Track 03 Hardening):** Transactional Cypher mutations (`MERGE`, `SET`) allow leadership to resolve conflicts and merge teams live on-screen.
 
 ---
@@ -33,11 +33,11 @@ When **FinPay** acquired **Vaultly**, engineering and architecture teams inherit
 - **Voiceover:**
   > *"Welcome to OrgBridge AI — The M&A Chaos Resolver built on FalkorDB for Track 03: Company Brain. When FinPay acquired Vaultly, they faced architectural chaos: duplicate systems, conflicting security policies, and disconnected teams. Flat vector search fails here because documents contradict each other. OrgBridge uses a 3-tenant FalkorDB multigraph — FinPay's graph, Vaultly's graph, and a merged brain where cross-company relationships are discovered automatically."*
 
-### **0:30 – 1:00 | Prompt 1: SME Discovery via PageRank**
+### **0:30 – 1:00 | Prompt 1: SME Discovery via Centrality & Authorship Lineage**
 - **Action:** Click **"Auth SME Discovery"** under Judge Evaluation Prompts.
 - **Visual:** The agent immediately replies with **Diya Nair** (PageRank influence 0.92, #1 for Authentication). The canvas isolates Diya Nair, her authored RFCs, and resolved Jira tickets in bright cyan.
 - **Voiceover:**
-  > *"Who actually knows the authentication stack at Vaultly? Instead of asking Slack, our agent runs PageRank over authored RFCs, resolved high-severity incidents, and system ownership. It identifies Diya Nair as the authoritative counterpart, citing her exact RFC-042 and postmortem."*
+  > *"Who actually knows the authentication stack at Vaultly? Instead of asking Slack, our agent evaluates stored PageRank centrality scores alongside authored RFCs, resolved high-severity incidents, and system ownership. It identifies Diya Nair as the authoritative counterpart, citing her exact RFC-042 and postmortem."*
 
 ### **1:00 – 1:30 | Prompt 2: Policy & Retention Conflicts**
 - **Action:** Click **"Policy Collisions"**.
@@ -100,7 +100,7 @@ To deploy the frontend to Vercel in 60 seconds:
 | :--- | :--- |
 | **Multitenant Knowledge Base** | Isolated `finpay_graph` and `vaultly_graph` + unified `merged_brain` in FalkorDB Cloud. |
 | **Entity Resolution** | Dense 384-dim semantic embeddings combined with shared external dependency overlap (`ExternalAPI`). |
-| **Graph Algorithms as Agent Tools** | PageRank for SME discovery, Bounded Shortest Path for warm introductions, conflict cycle detection. |
+| **Graph-Powered Agent Tools** | Stored PageRank centrality & authorship lineage for SME discovery, bounded path traversal (`[*1..4]`) for warm introductions, and cross-company policy conflict detection. |
 | **Decision Lineage & Citations** | Clickable RFC documents, Jira tickets, and Slack postmortems tracing every policy back to ground truth. |
 | **Keeping Knowledge Current** | Real-time transactional Cypher `MERGE`/`SET` mutations updating graph state live without re-indexing. |
 | **Full-Stack War Room** | Interactive Next.js 14 split-screen with force-directed 2D canvas, pulsing active subgraphs, and node inspector. |

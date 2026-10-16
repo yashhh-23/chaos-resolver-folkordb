@@ -64,7 +64,7 @@ chaos-resolver-folkordb/
     ├── test_schema_and_dataset.py  # Schema, edge integrity, collision guards (9 tests)
     ├── test_auto_linker.py         # Vector embeddings & auto-linker resolution (4 tests)
     ├── test_agent_tools.py         # Agent tools, MCP schema, & FastAPI endpoints (8 tests)
-    └── test_live_mutations.py      # Live graph mutations, Cypher MERGE/SET updates (3 tests)
+    └── test_live_mutations.py      # Live graph mutations, Cypher MERGE/SET updates (4 tests)
 
 
 ```
