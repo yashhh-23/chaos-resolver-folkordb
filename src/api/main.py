@@ -5,7 +5,7 @@ and live visual subgraph payloads for the Next.js War Room dashboard.
 """
 
 from typing import Optional, Dict, Any
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -49,6 +49,19 @@ class WarmIntroRequest(BaseModel):
     person_a: str = Field(..., description="Originating person", examples=["Aarav Mehta"])
     person_b: str = Field(..., description="Target counterpart person", examples=["Diya Nair"])
 
+
+class ResolveAuthRequest(BaseModel):
+    compromise_ttl_minutes: int = Field(default=30, description="Compromise JWT TTL in minutes", examples=[30])
+
+
+class ResolveRetentionRequest(BaseModel):
+    retention_days: int = Field(default=90, description="Audit retention period in days", examples=[90])
+
+
+class MergeTeamsRequest(BaseModel):
+    team_a_id: str = Field(default="finpay:team:secarch", description="First team to merge", examples=["finpay:team:secarch"])
+    team_b_id: str = Field(default="vaultly:team:identity_growth", description="Second team to merge", examples=["vaultly:team:identity_growth"])
+    unified_name: str = Field(default="Unified M&A Security & Identity Team", description="Unified joint team name", examples=["Unified M&A Security & Identity Team"])
 
 
 class MCPExecuteRequest(BaseModel):
@@ -184,32 +197,40 @@ def get_graph_visualization(graph: Optional[str] = None):
 
 # Live Mutation Endpoints (Phase 5 - Track 03: Keeping Knowledge Current)
 @app.post("/api/mutate/resolve-auth-conflict")
-def resolve_auth_conflict():
+def resolve_auth_conflict(req: Optional[ResolveAuthRequest] = Body(default=None)):
     """Live Mutation: Resolves 15-min vs 7-day token conflict by creating Unified Adaptive Policy."""
     from src.pipeline.mutations import live_mutations
     try:
-        return live_mutations.resolve_auth_conflict()
+        ttl = req.compromise_ttl_minutes if req else 30
+        return live_mutations.resolve_auth_conflict(compromise_ttl_minutes=ttl)
     except Exception as e:
         logger.error(f"Error in resolve_auth_conflict: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/mutate/resolve-retention-conflict")
-def resolve_retention_conflict():
+def resolve_retention_conflict(req: Optional[ResolveRetentionRequest] = Body(default=None)):
     """Live Mutation: Resolves 30-day vs 180-day retention conflict via tiered storage standard."""
     from src.pipeline.mutations import live_mutations
     try:
-        return live_mutations.resolve_retention_conflict()
+        days = req.retention_days if req else 90
+        return live_mutations.resolve_retention_conflict(retention_days=days)
     except Exception as e:
         logger.error(f"Error in resolve_retention_conflict: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/mutate/merge-teams")
-def merge_teams():
+def merge_teams(req: Optional[MergeTeamsRequest] = Body(default=None)):
     """Live Mutation: Merges SecArch and Identity Growth into Unified Engineering Org."""
     from src.pipeline.mutations import live_mutations
     try:
+        if req:
+            return live_mutations.merge_teams(
+                team_a_id=req.team_a_id,
+                team_b_id=req.team_b_id,
+                unified_name=req.unified_name,
+            )
         return live_mutations.merge_teams()
     except Exception as e:
         logger.error(f"Error in merge_teams: {e}")

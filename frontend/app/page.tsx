@@ -13,16 +13,25 @@ export default function WarRoomDashboard() {
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const [isHealthy, setIsHealthy] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [availableGraphs, setAvailableGraphs] = useState<string[]>([
+    "finpay_graph",
+    "vaultly_graph",
+    "merged_brain",
+  ]);
+  const [selectedGraph, setSelectedGraph] = useState<string>("merged_brain");
 
-  // Load initial graph and health check
+  // Load graph and health check on mount or when graph tenant selection changes
   useEffect(() => {
-    async function init() {
+    async function loadGraphData() {
       setIsLoading(true);
       try {
         const health = await checkBackendHealth();
         setIsHealthy(!!health.falkordb_connected);
+        if (health.active_graphs && Array.isArray(health.active_graphs) && health.active_graphs.length > 0) {
+          setAvailableGraphs(health.active_graphs);
+        }
 
-        const data = await fetchFullSubgraph("merged_brain");
+        const data = await fetchFullSubgraph(selectedGraph);
         if (data && data.nodes && data.nodes.length > 0) {
           setGraphData(data);
         } else {
@@ -35,8 +44,8 @@ export default function WarRoomDashboard() {
         setIsLoading(false);
       }
     }
-    init();
-  }, []);
+    loadGraphData();
+  }, [selectedGraph]);
 
   const handleSubgraphUpdate = (subgraph: SubgraphData | null) => {
     setActiveSubgraph(subgraph);
@@ -50,7 +59,7 @@ export default function WarRoomDashboard() {
     if (freshData && freshData.nodes && freshData.nodes.length > 0) {
       setGraphData(freshData);
     } else {
-      fetchFullSubgraph("merged_brain")
+      fetchFullSubgraph(selectedGraph)
         .then((d) => {
           if (d && d.nodes) setGraphData(d);
         })
@@ -65,10 +74,44 @@ export default function WarRoomDashboard() {
         onSubgraphUpdate={handleSubgraphUpdate}
         onFullGraphRefresh={handleFullGraphRefresh}
         isBackendHealthy={isHealthy}
+        graphData={graphData}
       />
 
       {/* Right Panel: Interactive FalkorDB Force-Graph Canvas */}
       <div className="relative flex-1 h-full bg-slate-950">
+        {/* Floating Tenant Graph Selector Pill for Judges */}
+        <div className="absolute top-4 left-4 z-20 flex items-center gap-1.5 p-1 bg-slate-900/90 backdrop-blur-md border border-slate-700/80 rounded-xl shadow-xl text-xs">
+          <span className="px-2.5 py-1 text-slate-400 font-semibold uppercase tracking-wider text-[10px]">
+            Graph Tenant:
+          </span>
+          {availableGraphs.map((g) => {
+            const isSelected = g === selectedGraph;
+            const label =
+              g === "finpay_graph"
+                ? "FinPay (Isolated)"
+                : g === "vaultly_graph"
+                ? "Vaultly (Isolated)"
+                : "Merged Brain 🧠";
+            return (
+              <button
+                key={g}
+                onClick={() => {
+                  setSelectedGraph(g);
+                  setActiveSubgraph(null);
+                  setSelectedNode(null);
+                }}
+                className={`px-3 py-1.5 rounded-lg font-medium transition-all ${
+                  isSelected
+                    ? "bg-indigo-600 text-white shadow-md shadow-indigo-500/20"
+                    : "text-slate-300 hover:text-white hover:bg-slate-800/80"
+                }`}
+              >
+                {label}
+              </button>
+            );
+          })}
+        </div>
+
         <GraphCanvas
           data={graphData}
           activeSubgraph={activeSubgraph}

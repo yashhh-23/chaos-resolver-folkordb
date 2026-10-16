@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import {
   Send,
   Sparkles,
@@ -29,7 +29,7 @@ export interface Message {
   timestamp: string;
 }
 
-const KNOWN_SYSTEMS = [
+const KNOWN_SYSTEMS_FALLBACK = [
   "Gatekeeper-Auth",
   "Pulse-Identity",
   "FinPay-Core-Ledger",
@@ -41,7 +41,7 @@ const KNOWN_SYSTEMS = [
   "core-api",
 ];
 
-const KNOWN_PEOPLE = [
+const KNOWN_PEOPLE_FALLBACK = [
   "Aarav Mehta",
   "Diya Nair",
   "Rohan Gupta",
@@ -53,7 +53,7 @@ const KNOWN_PEOPLE = [
   "Rahul Sharma",
 ];
 
-const KNOWN_DOMAINS = [
+const KNOWN_DOMAINS_FALLBACK = [
   "Authentication",
   "Data Retention",
   "Ledger",
@@ -187,6 +187,7 @@ interface ChatPanelProps {
   onSubgraphUpdate: (subgraph: SubgraphData | null) => void;
   onFullGraphRefresh?: (freshData?: SubgraphData) => void;
   isBackendHealthy: boolean;
+  graphData?: SubgraphData;
 }
 
 const CRISIS_PROMPTS = [
@@ -231,7 +232,38 @@ export default function ChatPanel({
   onSubgraphUpdate,
   onFullGraphRefresh,
   isBackendHealthy,
+  graphData,
 }: ChatPanelProps) {
+  // Dynamically derive systems, people, domains, and companies from the live graph
+  const dynamicSystems = useMemo(() => {
+    const fromGraph = (graphData?.nodes || [])
+      .filter((n) => n.label === "System" && n.name)
+      .map((n) => n.name);
+    return Array.from(new Set(fromGraph.length > 0 ? fromGraph : KNOWN_SYSTEMS_FALLBACK));
+  }, [graphData]);
+
+  const dynamicPeople = useMemo(() => {
+    const fromGraph = (graphData?.nodes || [])
+      .filter((n) => n.label === "Person" && n.name)
+      .map((n) => n.name);
+    return Array.from(new Set(fromGraph.length > 0 ? fromGraph : KNOWN_PEOPLE_FALLBACK));
+  }, [graphData]);
+
+  const dynamicDomains = useMemo(() => {
+    const fromGraph = (graphData?.nodes || [])
+      .map((n) => n.properties?.domain)
+      .filter(Boolean) as string[];
+    return Array.from(new Set(fromGraph.length > 0 ? fromGraph : KNOWN_DOMAINS_FALLBACK));
+  }, [graphData]);
+
+  const dynamicCompanies = useMemo(() => {
+    const fromGraph = (graphData?.nodes || [])
+      .map((n) => n.company_origin)
+      .filter((c) => c && c !== "External") as string[];
+    const set = new Set(fromGraph.length > 0 ? fromGraph : ["FinPay", "Vaultly", "Unified"]);
+    set.add("Unified");
+    return Array.from(set);
+  }, [graphData]);
   const [messages, setMessages] = useState<Message[]>([
     {
       id: "welcome",
@@ -362,8 +394,8 @@ export default function ChatPanel({
       lower.includes("warm")
     ) {
       endpoint = "warm-intro-path";
-      // Find known people mentioned in query
-      const matchedPeople = KNOWN_PEOPLE.filter((p) => lower.includes(p.toLowerCase()));
+      // Find known people dynamically mentioned in query
+      const matchedPeople = dynamicPeople.filter((p) => lower.includes(p.toLowerCase()));
       let personA = matchedPeople[0];
       let personB = matchedPeople[1];
 
@@ -379,8 +411,8 @@ export default function ChatPanel({
       }
 
       payload = {
-        person_a: personA || "Aarav Mehta",
-        person_b: personB || "Diya Nair",
+        person_a: personA || dynamicPeople[0] || "Aarav Mehta",
+        person_b: personB || dynamicPeople[1] || "Diya Nair",
       };
     }
     // 2. Decision Lineage
@@ -393,13 +425,13 @@ export default function ChatPanel({
       lower.includes("history")
     ) {
       endpoint = "trace-decision-lineage";
-      const matchedSys = KNOWN_SYSTEMS.find((s) => lower.includes(s.toLowerCase()));
+      const matchedSys = dynamicSystems.find((s) => lower.includes(s.toLowerCase()));
       let systemName = matchedSys;
 
       if (!systemName) {
         const quoted = userText.match(/['"]([^'"]+)['"]/);
         const sysWord = userText.match(/(?:for|system|of)\s+([A-Za-z0-9_-]+)/i);
-        systemName = (quoted && quoted[1]) || (sysWord && sysWord[1]) || "Gatekeeper-Auth";
+        systemName = (quoted && quoted[1]) || (sysWord && sysWord[1]) || dynamicSystems[0] || "Gatekeeper-Auth";
       }
 
       payload = { system_name: systemName };
@@ -414,9 +446,17 @@ export default function ChatPanel({
       lower.includes("lead")
     ) {
       endpoint = "find-counterpart-expert";
-      const company = lower.includes("finpay") ? "FinPay" : "Vaultly";
+      // Dynamic company extraction supporting Unified entity after live mutations
+      let company = "Vaultly";
+      if (lower.includes("unified")) company = "Unified";
+      else if (lower.includes("finpay")) company = "FinPay";
+      else if (lower.includes("vaultly")) company = "Vaultly";
+      else {
+        const matchedCo = dynamicCompanies.find((c) => lower.includes(c.toLowerCase()));
+        if (matchedCo) company = matchedCo;
+      }
 
-      let topic = "Authentication";
+      let topic = dynamicDomains[0] || "Authentication";
       if (lower.includes("auth")) topic = "Authentication";
       else if (lower.includes("retention") || lower.includes("audit")) topic = "Data Retention";
       else if (lower.includes("ledger") || lower.includes("balance")) topic = "Ledger";
@@ -424,7 +464,7 @@ export default function ChatPanel({
       else if (lower.includes("kyc") || lower.includes("onboard")) topic = "KYC";
       else if (lower.includes("core")) topic = "Core Services";
       else {
-        const matchedDomain = KNOWN_DOMAINS.find((d) => lower.includes(d.toLowerCase()));
+        const matchedDomain = dynamicDomains.find((d) => lower.includes(d.toLowerCase()));
         if (matchedDomain) topic = matchedDomain;
       }
 
@@ -447,6 +487,10 @@ export default function ChatPanel({
       else if (lower.includes("gateway") || lower.includes("mesh")) domain = "Gateway";
       else if (lower.includes("kyc")) domain = "KYC";
       else if (lower.includes("core")) domain = "Core Services";
+      else {
+        const matchedDomain = dynamicDomains.find((d) => lower.includes(d.toLowerCase()));
+        if (matchedDomain) domain = matchedDomain;
+      }
 
       payload = { domain };
     }

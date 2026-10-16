@@ -2,7 +2,11 @@
  * API client to communicate with OrgBridge FastAPI backend.
  */
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://orgbridge-ai-backend.onrender.com";
+const API_BASE =
+  process.env.NEXT_PUBLIC_API_URL ||
+  (process.env.NODE_ENV === "development"
+    ? "http://localhost:8000"
+    : "https://orgbridge-ai-backend.onrender.com");
 
 export interface GraphNode {
   id: string;
@@ -63,14 +67,21 @@ export async function callTool(endpoint: string, payload?: Record<string, any>):
   return await res.json();
 }
 
-export async function mutateGraph(action: "resolve-auth" | "resolve-retention" | "merge-teams" | "reset-demo"): Promise<any> {
+export async function mutateGraph(
+  action: "resolve-auth" | "resolve-retention" | "merge-teams" | "reset-demo",
+  payload?: Record<string, any>
+): Promise<any> {
   let endpoint = "";
   if (action === "resolve-auth") endpoint = "/api/mutate/resolve-auth-conflict";
   else if (action === "resolve-retention") endpoint = "/api/mutate/resolve-retention-conflict";
   else if (action === "merge-teams") endpoint = "/api/mutate/merge-teams";
   else if (action === "reset-demo") endpoint = "/api/mutate/reset-demo";
 
-  const res = await fetch(`${API_BASE}${endpoint}`, { method: "POST" });
+  const res = await fetch(`${API_BASE}${endpoint}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: payload ? JSON.stringify(payload) : undefined,
+  });
   if (!res.ok) throw new Error(`Mutation failed: ${res.statusText}`);
   return await res.json();
 }

@@ -211,7 +211,7 @@ def main():
     elif args.subcommand == "serve":
         import uvicorn
         console.print(f"[bold green]Starting OrgBridge AI API Server on http://{args.host}:{args.port}[/bold green]")
-        uvicorn.run("src.api.main:app", host=args.host, port=args.port, reload=True)
+        uvicorn.run("src.api.main:app", host=args.host, port=args.port, reload=(settings.environment.lower() == "development"))
     elif args.subcommand == "tool":
         from src.tools.graph_tools import agent_tools
         if args.tool_action == "find-expert":

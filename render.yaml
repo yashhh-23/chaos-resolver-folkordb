@@ -11,7 +11,7 @@ services:
       - key: FALKORDB_HOST
         sync: false
       - key: FALKORDB_PORT
-        value: "55015"
+        sync: false
       - key: FALKORDB_USERNAME
         value: falkordb
       - key: FALKORDB_PASSWORD

@@ -11,6 +11,8 @@ from pathlib import Path
 
 from src.config import settings
 from src.utils.logger import logger
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 from src.schema.models import Relationship
 from src.schema.cypher_schema import (
     INDEX_QUERIES,
@@ -135,7 +137,8 @@ def generate_graph_cypher_scripts() -> Dict[str, List[str]]:
 def export_cypher_files(output_dir: str = "artifacts/cypher") -> List[str]:
     """Exports generated Cypher queries to disk as runnable .cypher scripts."""
     scripts = generate_graph_cypher_scripts()
-    out_path = Path(output_dir)
+    target_path = Path(output_dir)
+    out_path = target_path if target_path.is_absolute() else (PROJECT_ROOT / target_path)
     out_path.mkdir(parents=True, exist_ok=True)
     created_files = []
 

@@ -1,5 +1,8 @@
+from pathlib import Path
 from typing import Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 class Settings(BaseSettings):
@@ -21,12 +24,18 @@ class Settings(BaseSettings):
     # LLM Settings (for Phase 2 & 3)
     openai_api_key: Optional[str] = None
 
+    # Auto-Linker Engine Parameters
+    auto_linker_threshold: float = 0.82
+    auto_linker_graph_bonus_per_api: float = 0.12
+    auto_linker_domain_bonus: float = 0.05
+    auto_linker_max_score: float = 0.99
+
     # General
     environment: str = "development"
     log_level: str = "INFO"
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=(str(PROJECT_ROOT / ".env"), ".env"),
         env_file_encoding="utf-8",
         extra="ignore",
     )
