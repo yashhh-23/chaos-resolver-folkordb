@@ -2,7 +2,7 @@
  * API client to communicate with OrgBridge FastAPI backend.
  */
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://orgbridge-ai-backend.onrender.com";
 
 export interface GraphNode {
   id: string;
