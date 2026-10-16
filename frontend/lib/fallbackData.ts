@@ -35,29 +35,29 @@ export const FALLBACK_STATIC_GRAPH: SubgraphData = {
       properties: { role: "Senior Backend Developer", email: "diya.nair@vaultly.io", pagerank: 0.92 },
     },
     {
-      id: "ext:uidai_aadhaar",
-      name: "UIDAI Aadhaar API",
+      id: "ext:api:uidai_aadhaar",
+      name: "UIDAI_Aadhaar",
       label: "ExternalAPI",
       company_origin: "External",
       properties: { provider: "UIDAI", category: "Identity" },
     },
     {
-      id: "ext:stripe",
-      name: "Stripe Connect API",
+      id: "ext:api:stripe",
+      name: "Stripe_Gateway",
       label: "ExternalAPI",
       company_origin: "External",
       properties: { provider: "Stripe", category: "Payments" },
     },
     {
       id: "finpay:pol:session_security",
-      name: "Session Security Standard",
+      name: "FinPay Session Security Policy",
       label: "Policy",
       company_origin: "FinPay",
       properties: { domain: "Authentication", status: "ACTIVE" },
     },
     {
       id: "vaultly:pol:session_continuity",
-      name: "Mobile Session Continuity Policy",
+      name: "Vaultly Frictionless Session Policy",
       label: "Policy",
       company_origin: "Vaultly",
       properties: { domain: "Authentication", status: "ACTIVE" },
@@ -92,12 +92,12 @@ export const FALLBACK_STATIC_GRAPH: SubgraphData = {
     },
     {
       source: "finpay:sys:gatekeeper_auth",
-      target: "ext:uidai_aadhaar",
+      target: "ext:api:uidai_aadhaar",
       rel_type: "CALLS",
     },
     {
       source: "vaultly:sys:pulse_identity",
-      target: "ext:uidai_aadhaar",
+      target: "ext:api:uidai_aadhaar",
       rel_type: "CALLS",
     },
     {
@@ -115,6 +115,16 @@ export const FALLBACK_STATIC_GRAPH: SubgraphData = {
       target: "vaultly:sys:vault_engine",
       rel_type: "REDUNDANT_WITH",
       properties: { similarity: 0.99 },
+    },
+    {
+      source: "finpay:sys:finpay_core_ledger",
+      target: "ext:api:stripe",
+      rel_type: "CALLS",
+    },
+    {
+      source: "vaultly:sys:vault_engine",
+      target: "ext:api:stripe",
+      rel_type: "CALLS",
     },
   ],
 };

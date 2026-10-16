@@ -56,12 +56,10 @@ const KNOWN_PEOPLE = [
 const KNOWN_DOMAINS = [
   "Authentication",
   "Data Retention",
-  "PCI-DSS",
-  "Core Services",
   "Ledger",
-  "Risk Management",
-  "Compliance",
-  "Payments",
+  "Gateway",
+  "KYC",
+  "Core Services",
 ];
 
 function escapeHtml(str: string): string {
@@ -421,10 +419,10 @@ export default function ChatPanel({
       let topic = "Authentication";
       if (lower.includes("auth")) topic = "Authentication";
       else if (lower.includes("retention") || lower.includes("audit")) topic = "Data Retention";
-      else if (lower.includes("pci")) topic = "PCI-DSS";
       else if (lower.includes("ledger") || lower.includes("balance")) topic = "Ledger";
+      else if (lower.includes("gateway") || lower.includes("mesh")) topic = "Gateway";
+      else if (lower.includes("kyc") || lower.includes("onboard")) topic = "KYC";
       else if (lower.includes("core")) topic = "Core Services";
-      else if (lower.includes("risk") || lower.includes("fraud")) topic = "Risk Management";
       else {
         const matchedDomain = KNOWN_DOMAINS.find((d) => lower.includes(d.toLowerCase()));
         if (matchedDomain) topic = matchedDomain;
@@ -445,8 +443,9 @@ export default function ChatPanel({
       let domain: string | undefined = undefined;
       if (lower.includes("auth")) domain = "Authentication";
       else if (lower.includes("retention") || lower.includes("audit")) domain = "Data Retention";
-      else if (lower.includes("pci")) domain = "PCI-DSS";
       else if (lower.includes("ledger")) domain = "Ledger";
+      else if (lower.includes("gateway") || lower.includes("mesh")) domain = "Gateway";
+      else if (lower.includes("kyc")) domain = "KYC";
       else if (lower.includes("core")) domain = "Core Services";
 
       payload = { domain };
