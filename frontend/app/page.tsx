@@ -55,15 +55,16 @@ export default function WarRoomDashboard() {
     }
   };
 
-  const handleFullGraphRefresh = (freshData?: SubgraphData) => {
+  const handleFullGraphRefresh = async (freshData?: SubgraphData): Promise<void> => {
     if (freshData && freshData.nodes && freshData.nodes.length > 0) {
       setGraphData(freshData);
     } else {
-      fetchFullSubgraph(selectedGraph)
-        .then((d) => {
-          if (d && d.nodes) setGraphData(d);
-        })
-        .catch((err) => console.warn("Could not refresh full graph:", err));
+      try {
+        const d = await fetchFullSubgraph(selectedGraph);
+        if (d && d.nodes) setGraphData(d);
+      } catch (err) {
+        console.warn("Could not refresh full graph:", err);
+      }
     }
   };
 

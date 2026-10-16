@@ -186,7 +186,7 @@ function renderSafeMarkdown(text: string): string {
 
 interface ChatPanelProps {
   onSubgraphUpdate: (subgraph: SubgraphData | null) => void;
-  onFullGraphRefresh?: (freshData?: SubgraphData) => void;
+  onFullGraphRefresh?: (freshData?: SubgraphData) => Promise<void> | void;
   isBackendHealthy: boolean;
   graphData?: SubgraphData;
 }
@@ -354,16 +354,25 @@ export default function ChatPanel({
       };
       setMessages((prev) => [...prev, agentMsg]);
 
-      // Re-fetch the full updated graph from FalkorDB so main canvas reflects mutations
-      if (onFullGraphRefresh) {
-        onFullGraphRefresh();
-      }
-
-      // Handle active subgraph isolation / highlight
+      // Re-fetch or update the full graph from FalkorDB so main canvas reflects mutations
       if (action === "reset-demo") {
+        // For reset-demo, res.subgraph already contains the full refreshed graph.
+        // Pass it directly to avoid an unnecessary second GET /api/graph/subgraph round-trip.
+        if (onFullGraphRefresh && res.subgraph) {
+          await onFullGraphRefresh(res.subgraph);
+        } else if (onFullGraphRefresh) {
+          await onFullGraphRefresh();
+        }
         onSubgraphUpdate(null);
-      } else if (res.subgraph) {
-        onSubgraphUpdate(res.subgraph);
+      } else {
+        // Await full graph refresh first so graphData contains the newly created unified:* nodes
+        // before onSubgraphUpdate triggers active subgraph isolation and inspector selection.
+        if (onFullGraphRefresh) {
+          await onFullGraphRefresh();
+        }
+        if (res.subgraph) {
+          onSubgraphUpdate(res.subgraph);
+        }
       }
     } catch (err: any) {
       setMessages((prev) => [
