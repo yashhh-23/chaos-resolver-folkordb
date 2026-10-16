@@ -162,7 +162,8 @@ def get_graph_visualization(graph: Optional[str] = None):
             props=row[4] if isinstance(row[4], dict) else {},
         )
 
-    # Query relationships
+    # Query relationships (guaranteeing both source and target exist in node set)
+    valid_node_ids = {n.id for n in subgraph.nodes}
     rel_query = """
         MATCH (a)-[r]->(b)
         RETURN a.id, b.id, type(r), properties(r)
@@ -170,12 +171,13 @@ def get_graph_visualization(graph: Optional[str] = None):
     """
     rel_res = g.query(rel_query)
     for row in rel_res.result_set:
-        subgraph.add_edge(
-            source=row[0],
-            target=row[1],
-            rel_type=row[2],
-            props=row[3] if isinstance(row[3], dict) else {},
-        )
+        if row[0] in valid_node_ids and row[1] in valid_node_ids:
+            subgraph.add_edge(
+                source=row[0],
+                target=row[1],
+                rel_type=row[2],
+                props=row[3] if isinstance(row[3], dict) else {},
+            )
 
     return subgraph
 
@@ -223,7 +225,12 @@ def reset_demo_graph():
         logger.info("Resetting demo multigraphs in FalkorDB...")
         seed_all_graphs(clear_first=True)
         auto_linker_engine.run_pipeline(settings.graph_merged)
-        return {"status": "success", "message": "FalkorDB multigraphs reset and auto-linked successfully."}
+        fresh_subgraph = get_graph_visualization(settings.graph_merged)
+        return {
+            "status": "success",
+            "message": "FalkorDB multigraphs reset and auto-linked successfully.",
+            "subgraph": fresh_subgraph.model_dump(),
+        }
     except Exception as e:
         logger.error(f"Error in reset_demo_graph: {e}")
         raise HTTPException(status_code=500, detail=str(e))

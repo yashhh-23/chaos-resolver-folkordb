@@ -31,6 +31,7 @@ export interface Message {
 
 interface ChatPanelProps {
   onSubgraphUpdate: (subgraph: SubgraphData | null) => void;
+  onFullGraphRefresh?: (freshData?: SubgraphData) => void;
   isBackendHealthy: boolean;
 }
 
@@ -74,6 +75,7 @@ const CRISIS_PROMPTS = [
 
 export default function ChatPanel({
   onSubgraphUpdate,
+  onFullGraphRefresh,
   isBackendHealthy,
 }: ChatPanelProps) {
   const [messages, setMessages] = useState<Message[]>([
@@ -156,7 +158,21 @@ export default function ChatPanel({
         timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       };
       setMessages((prev) => [...prev, agentMsg]);
-      if (res.subgraph) {
+
+      // Re-fetch the full updated graph from FalkorDB so main canvas reflects mutations
+      try {
+        const fullData = await fetchFullSubgraph("merged_brain");
+        if (onFullGraphRefresh) {
+          onFullGraphRefresh(fullData);
+        }
+      } catch (refreshErr) {
+        console.warn("Could not refresh full graph after mutation:", refreshErr);
+      }
+
+      // Handle active subgraph isolation / highlight
+      if (action === "reset-demo") {
+        onSubgraphUpdate(null);
+      } else if (res.subgraph) {
         onSubgraphUpdate(res.subgraph);
       }
     } catch (err: any) {

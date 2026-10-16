@@ -40,11 +40,24 @@ export default function WarRoomDashboard() {
     }
   };
 
+  const handleFullGraphRefresh = (freshData?: SubgraphData) => {
+    if (freshData && freshData.nodes && freshData.nodes.length > 0) {
+      setGraphData(freshData);
+    } else {
+      fetchFullSubgraph("merged_brain")
+        .then((d) => {
+          if (d && d.nodes) setGraphData(d);
+        })
+        .catch((err) => console.warn("Could not refresh full graph:", err));
+    }
+  };
+
   return (
     <main className="flex h-screen w-screen overflow-hidden bg-slate-950 font-sans">
       {/* Left Panel: Agent Chat & M&A Crisis Prompts */}
       <ChatPanel
         onSubgraphUpdate={handleSubgraphUpdate}
+        onFullGraphRefresh={handleFullGraphRefresh}
         isBackendHealthy={isHealthy}
       />
 

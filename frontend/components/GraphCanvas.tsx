@@ -67,18 +67,28 @@ export default function GraphCanvas({
     return keys;
   }, [activeSubgraph]);
 
-  // Filter or dim graph
+  // Filter and sanitize graph data so disconnected links never cause D3 simulation crash
   const displayData = useMemo(() => {
-    if (showOnlyActive && activeSubgraph && activeSubgraph.nodes.length > 0) {
-      return {
-        nodes: activeSubgraph.nodes.map((n) => ({ ...n })),
-        links: activeSubgraph.edges.map((e) => ({ ...e })),
-      };
-    }
-    return {
-      nodes: data.nodes.map((n) => ({ ...n })),
-      links: data.edges.map((e) => ({ ...e })),
-    };
+    const sourceData =
+      showOnlyActive && activeSubgraph && activeSubgraph.nodes && activeSubgraph.nodes.length > 0
+        ? activeSubgraph
+        : data;
+
+    const rawNodes = sourceData?.nodes || [];
+    const rawEdges = sourceData?.edges || [];
+
+    const nodes = rawNodes.map((n) => ({ ...n }));
+    const validNodeIds = new Set(nodes.map((n) => n.id));
+
+    const links = rawEdges
+      .filter((e) => {
+        const sId = typeof e.source === "object" && e.source !== null ? (e.source as any).id : e.source;
+        const tId = typeof e.target === "object" && e.target !== null ? (e.target as any).id : e.target;
+        return validNodeIds.has(sId) && validNodeIds.has(tId);
+      })
+      .map((e) => ({ ...e }));
+
+    return { nodes, links };
   }, [data, activeSubgraph, showOnlyActive]);
 
   // Center on active nodes or graph when data updates
@@ -102,8 +112,8 @@ export default function GraphCanvas({
   };
 
   const getEdgeColor = (link: any) => {
-    const sId = typeof link.source === "object" ? link.source.id : link.source;
-    const tId = typeof link.target === "object" ? link.target.id : link.target;
+    const sId = typeof link.source === "object" && link.source !== null ? link.source.id : link.source;
+    const tId = typeof link.target === "object" && link.target !== null ? link.target.id : link.target;
     const isHighlighted = activeEdgeKeys.size === 0 || activeEdgeKeys.has(`${sId}->${tId}`);
 
     if (link.rel_type === "CONFLICTS_WITH") return isHighlighted ? "#ef4444" : "#ef444433";
