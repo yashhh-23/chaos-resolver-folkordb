@@ -5,6 +5,7 @@ import ChatPanel from "@/components/ChatPanel";
 import GraphCanvas from "@/components/GraphCanvas";
 import NodeInspectorModal from "@/components/NodeInspectorModal";
 import { SubgraphData, GraphNode, fetchFullSubgraph, checkBackendHealth } from "@/lib/api";
+import { FALLBACK_STATIC_GRAPH } from "@/lib/fallbackData";
 
 export default function WarRoomDashboard() {
   const [graphData, setGraphData] = useState<SubgraphData>({ nodes: [], edges: [] });
@@ -22,9 +23,14 @@ export default function WarRoomDashboard() {
         setIsHealthy(!!health.falkordb_connected);
 
         const data = await fetchFullSubgraph("merged_brain");
-        setGraphData(data);
+        if (data && data.nodes && data.nodes.length > 0) {
+          setGraphData(data);
+        } else {
+          setGraphData(FALLBACK_STATIC_GRAPH);
+        }
       } catch (err) {
-        console.warn("Could not fetch live graph, using fallback static preview", err);
+        console.info("Live backend connection pending, activating curated static preview:", err);
+        setGraphData(FALLBACK_STATIC_GRAPH);
       } finally {
         setIsLoading(false);
       }

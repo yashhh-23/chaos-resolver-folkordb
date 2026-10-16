@@ -29,6 +29,164 @@ export interface Message {
   timestamp: string;
 }
 
+const KNOWN_SYSTEMS = [
+  "Gatekeeper-Auth",
+  "Pulse-Identity",
+  "FinPay-Ledger-Core",
+  "Vault-Balance-Service",
+  "FinPay-Mesh-Gateway",
+  "Vaultly-Public-API",
+  "FinPay-Risk-Engine",
+  "Vault-Fraud-Shield",
+  "FinPay-Audit-Vault",
+  "Vaultly-Archiver",
+];
+
+const KNOWN_PEOPLE = [
+  "Aarav Mehta",
+  "Diya Nair",
+  "Rohan Sharma",
+  "Priya Patel",
+  "Vikram Malhotra",
+  "Ananya Iyer",
+  "Kavita Rao",
+  "Sameer Sen",
+  "Neha Verma",
+  "Arjun Deshmukh",
+];
+
+const KNOWN_DOMAINS = [
+  "Authentication",
+  "Data Retention",
+  "PCI-DSS",
+  "Core Services",
+  "Ledger",
+  "Risk Management",
+  "Compliance",
+  "Payments",
+];
+
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function formatInline(str: string): string {
+  return str
+    // Inline code: `code`
+    .replace(
+      /`([^`]+)`/g,
+      '<code class="bg-slate-950 text-cyan-300 px-1 py-0.5 rounded font-mono text-[11px] border border-slate-800">$1</code>'
+    )
+    // Bold: **bold**
+    .replace(/\*\*([^*]+)\*\*/g, '<strong class="font-bold text-white">$1</strong>')
+    // Italic: *italic*
+    .replace(/\*([^*]+)\*/g, '<em class="text-slate-300">$1</em>')
+    // Links: [text](url)
+    .replace(
+      /\[(.*?)\]\(((?:https?:\/\/|\/|mailto:)[^\s"'>]+)\)/g,
+      '<a href="$2" target="_blank" rel="noopener noreferrer" class="text-cyan-400 underline underline-offset-2 hover:text-cyan-300 font-medium">$1</a>'
+    );
+}
+
+function renderSafeMarkdown(text: string): string {
+  if (!text) return "";
+
+  // 1. Escape all raw HTML to neutralize XSS
+  const escaped = escapeHtml(text);
+
+  // 2. Process block elements line by line
+  const lines = escaped.split(/\r?\n/);
+  const output: string[] = [];
+  let inUl = false;
+  let inOl = false;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    // Unordered list item (- or *)
+    const ulMatch = line.match(/^(\s*)[-*]\s+(.*)$/);
+    if (ulMatch) {
+      if (inOl) {
+        output.push("</ol>");
+        inOl = false;
+      }
+      if (!inUl) {
+        output.push('<ul class="list-disc list-inside space-y-1 my-1 pl-1 text-slate-200">');
+        inUl = true;
+      }
+      output.push(`<li>${formatInline(ulMatch[2])}</li>`);
+      continue;
+    } else if (inUl) {
+      output.push("</ul>");
+      inUl = false;
+    }
+
+    // Ordered list item (1. 2.)
+    const olMatch = line.match(/^(\s*)\d+\.\s+(.*)$/);
+    if (olMatch) {
+      if (inUl) {
+        output.push("</ul>");
+        inUl = false;
+      }
+      if (!inOl) {
+        output.push('<ol class="list-decimal list-inside space-y-1 my-1 pl-1 text-slate-200">');
+        inOl = true;
+      }
+      output.push(`<li>${formatInline(olMatch[2])}</li>`);
+      continue;
+    } else if (inOl) {
+      output.push("</ol>");
+      inOl = false;
+    }
+
+    // Headings
+    if (line.startsWith("### ")) {
+      output.push(`<h3 class="font-bold text-cyan-400 text-sm mt-2 mb-1">${formatInline(line.slice(4))}</h3>`);
+      continue;
+    }
+    if (line.startsWith("#### ")) {
+      output.push(`<h4 class="font-semibold text-slate-100 text-xs mt-1.5 mb-0.5">${formatInline(line.slice(5))}</h4>`);
+      continue;
+    }
+
+    // Blockquotes (> becomes &gt;)
+    if (line.startsWith("&gt; ") || line.startsWith("&gt;")) {
+      const bqContent = line.replace(/^&gt;\s?/, "");
+      output.push(
+        `<blockquote class="border-l-2 border-cyan-500/80 pl-2.5 my-1.5 text-slate-300 italic text-[11px] bg-slate-900/40 py-1 rounded-r">${formatInline(
+          bqContent
+        )}</blockquote>`
+      );
+      continue;
+    }
+
+    // Horizontal rules
+    if (/^---|\*\*\*|___$/.test(line.trim())) {
+      output.push('<hr class="border-slate-700/70 my-2" />');
+      continue;
+    }
+
+    // Paragraph gaps
+    if (!line.trim()) {
+      output.push('<div class="h-1.5"></div>');
+      continue;
+    }
+
+    // Regular line
+    output.push(`<p class="leading-relaxed">${formatInline(line)}</p>`);
+  }
+
+  if (inUl) output.push("</ul>");
+  if (inOl) output.push("</ol>");
+
+  return output.join("");
+}
+
 interface ChatPanelProps {
   onSubgraphUpdate: (subgraph: SubgraphData | null) => void;
   onFullGraphRefresh?: (freshData?: SubgraphData) => void;
@@ -198,24 +356,112 @@ export default function ChatPanel({
     const userText = input.trim();
     setInput("");
 
-    // Infer endpoint based on query keywords
+    // Dynamically infer endpoint and extract entities
     let endpoint = "find-redundant-systems";
     let payload: any = {};
     const lower = userText.toLowerCase();
 
-    if (lower.includes("expert") || lower.includes("who") || lower.includes("sme")) {
-
-      endpoint = "find-counterpart-expert";
-      payload = { topic: lower.includes("auth") ? "Authentication" : "Core", company: "Vaultly" };
-    } else if (lower.includes("conflict") || lower.includes("policy") || lower.includes("retention")) {
-      endpoint = "detect-policy-conflicts";
-      payload = { domain: lower.includes("auth") ? "Authentication" : undefined };
-    } else if (lower.includes("lineage") || lower.includes("why") || lower.includes("decision")) {
-      endpoint = "trace-decision-lineage";
-      payload = { system_name: "Gatekeeper-Auth" };
-    } else if (lower.includes("intro") || lower.includes("connect") || lower.includes("path")) {
+    // 1. Warm Intro Path
+    if (
+      lower.includes("intro") ||
+      lower.includes("connect") ||
+      lower.includes("path") ||
+      lower.includes("reach") ||
+      lower.includes("introduce") ||
+      lower.includes("warm")
+    ) {
       endpoint = "warm-intro-path";
-      payload = { person_a: "Aarav Mehta", person_b: "Diya Nair" };
+      // Find known people mentioned in query
+      const matchedPeople = KNOWN_PEOPLE.filter((p) => lower.includes(p.toLowerCase()));
+      let personA = matchedPeople[0];
+      let personB = matchedPeople[1];
+
+      // Try regex extraction for "between X and Y" or "from X to Y"
+      if (!personA || !personB) {
+        const betweenMatch = userText.match(
+          /(?:between|from)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s+(?:and|to)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)/i
+        );
+        if (betweenMatch) {
+          personA = personA || betweenMatch[1].trim();
+          personB = personB || betweenMatch[2].trim();
+        }
+      }
+
+      payload = {
+        person_a: personA || "Aarav Mehta",
+        person_b: personB || "Diya Nair",
+      };
+    }
+    // 2. Decision Lineage
+    else if (
+      lower.includes("lineage") ||
+      lower.includes("why") ||
+      lower.includes("decision") ||
+      lower.includes("rfc") ||
+      lower.includes("origin") ||
+      lower.includes("history")
+    ) {
+      endpoint = "trace-decision-lineage";
+      const matchedSys = KNOWN_SYSTEMS.find((s) => lower.includes(s.toLowerCase()));
+      let systemName = matchedSys;
+
+      if (!systemName) {
+        const quoted = userText.match(/['"]([^'"]+)['"]/);
+        const sysWord = userText.match(/(?:for|system|of)\s+([A-Za-z0-9_-]+)/i);
+        systemName = (quoted && quoted[1]) || (sysWord && sysWord[1]) || "Gatekeeper-Auth";
+      }
+
+      payload = { system_name: systemName };
+    }
+    // 3. Counterpart SME Discovery
+    else if (
+      lower.includes("expert") ||
+      lower.includes("who") ||
+      lower.includes("sme") ||
+      lower.includes("counterpart") ||
+      lower.includes("specialist") ||
+      lower.includes("lead")
+    ) {
+      endpoint = "find-counterpart-expert";
+      const company = lower.includes("finpay") ? "FinPay" : "Vaultly";
+
+      let topic = "Authentication";
+      if (lower.includes("auth")) topic = "Authentication";
+      else if (lower.includes("retention") || lower.includes("audit")) topic = "Data Retention";
+      else if (lower.includes("pci")) topic = "PCI-DSS";
+      else if (lower.includes("ledger") || lower.includes("balance")) topic = "Ledger";
+      else if (lower.includes("core")) topic = "Core Services";
+      else if (lower.includes("risk") || lower.includes("fraud")) topic = "Risk Management";
+      else {
+        const matchedDomain = KNOWN_DOMAINS.find((d) => lower.includes(d.toLowerCase()));
+        if (matchedDomain) topic = matchedDomain;
+      }
+
+      payload = { topic, company };
+    }
+    // 4. Policy Conflicts
+    else if (
+      lower.includes("conflict") ||
+      lower.includes("policy") ||
+      lower.includes("retention") ||
+      lower.includes("compliance") ||
+      lower.includes("clash") ||
+      lower.includes("contradiction")
+    ) {
+      endpoint = "detect-policy-conflicts";
+      let domain: string | undefined = undefined;
+      if (lower.includes("auth")) domain = "Authentication";
+      else if (lower.includes("retention") || lower.includes("audit")) domain = "Data Retention";
+      else if (lower.includes("pci")) domain = "PCI-DSS";
+      else if (lower.includes("ledger")) domain = "Ledger";
+      else if (lower.includes("core")) domain = "Core Services";
+
+      payload = { domain };
+    }
+    // 5. Redundant Systems (default)
+    else {
+      endpoint = "find-redundant-systems";
+      payload = {};
     }
 
     const userMsg: Message = {
@@ -384,7 +630,7 @@ export default function ChatPanel({
                   <Bot className="w-3.5 h-3.5 text-cyan-400" />
                   <span className="font-semibold text-slate-300">OrgBridge Agent</span>
                   {m.toolName && (
-                    <span className="bg-slate-800 text-[10px] text-cyan-300 px-1.5 py-0.2 rounded border border-cyan-800">
+                    <span className="bg-slate-800 text-[10px] text-cyan-300 px-1.5 py-0.5 rounded border border-cyan-800 font-mono">
                       {m.toolName}
                     </span>
                   )}
@@ -395,24 +641,20 @@ export default function ChatPanel({
             <div
               className={`p-3.5 rounded-xl max-w-[92%] text-xs leading-relaxed shadow-lg ${
                 m.sender === "user"
-                  ? "bg-blue-600 text-white rounded-tr-none"
-                  : "bg-slate-800/90 border border-slate-700/70 text-slate-200 rounded-tl-none prose prose-invert prose-xs max-w-none"
+                  ? "bg-blue-600 text-white rounded-tr-none font-medium"
+                  : "bg-slate-800/90 border border-slate-700/70 text-slate-200 rounded-tl-none"
               }`}
             >
-              <div
-                className="whitespace-pre-wrap break-words space-y-2"
-                dangerouslySetInnerHTML={{
-                  __html: m.text
-                    .replace(/\n\n/g, "<br/><br/>")
-                    .replace(/\n/g, "<br/>")
-                    .replace(/### (.*?)(<br\/>|$)/g, '<h3 class="font-bold text-cyan-400 text-sm">$1</h3>')
-                    .replace(/#### (.*?)(<br\/>|$)/g, '<h4 class="font-semibold text-slate-100 text-xs mt-1">$1</h4>')
-                    .replace(/\*\*(.*?)\*\*/g, '<strong class="font-bold text-white">$1</strong>')
-                    .replace(/\*(.*?)\*/g, '<em class="text-slate-300">$1</em>')
-                    .replace(/`([^`]+)`/g, '<code class="bg-slate-900 text-cyan-300 px-1 py-0.5 rounded font-mono text-[11px]">$1</code>')
-                    .replace(/\[(.*?)\]\((.*?)\)/g, '<a href="$2" target="_blank" rel="noreferrer" class="text-blue-400 underline hover:text-blue-300">$1</a>'),
-                }}
-              />
+              {m.sender === "user" ? (
+                <div className="whitespace-pre-wrap break-words">{m.text}</div>
+              ) : (
+                <div
+                  className="space-y-1.5 break-words"
+                  dangerouslySetInnerHTML={{
+                    __html: renderSafeMarkdown(m.text),
+                  }}
+                />
+              )}
 
               {m.subgraph && m.subgraph.nodes.length > 0 && (
                 <div className="mt-3 pt-2 border-t border-slate-700/60 flex items-center justify-between text-[11px]">

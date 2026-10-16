@@ -32,7 +32,7 @@ export default function NodeInspectorModal({ node, onClose }: NodeInspectorModal
   const props = node.properties || {};
 
   return (
-    <div className="absolute bottom-4 right-4 z-20 w-80 md:w-96 bg-slate-900/95 backdrop-blur-md border border-slate-700/80 rounded-xl p-4 shadow-2xl text-xs text-slate-200 animate-in fade-in slide-in-from-bottom-4 duration-200">
+    <div className="absolute bottom-4 right-4 z-20 w-80 md:w-96 bg-slate-900/95 backdrop-blur-md border border-slate-700/80 rounded-xl p-4 shadow-2xl text-xs text-slate-200 transition-all duration-200 transform translate-y-0 opacity-100 ease-out">
       <div className="flex items-start justify-between border-b border-slate-800 pb-3 mb-3">
         <div className="flex items-center gap-2">
           <div className="p-2 rounded-lg bg-slate-800 border border-slate-700">
@@ -41,11 +41,11 @@ export default function NodeInspectorModal({ node, onClose }: NodeInspectorModal
           <div>
             <h3 className="font-bold text-sm text-white">{node.name}</h3>
             <div className="flex items-center gap-1.5 mt-0.5">
-              <span className="text-[10px] uppercase font-mono px-1.5 py-0.2 bg-slate-800 rounded text-slate-400 border border-slate-700">
+              <span className="text-[10px] uppercase font-mono px-1.5 py-0.5 bg-slate-800 rounded text-slate-400 border border-slate-700">
                 {node.label}
               </span>
               <span
-                className={`text-[10px] font-semibold px-1.5 py-0.2 rounded ${
+                className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${
                   isFinPay
                     ? "bg-blue-600/30 text-blue-300 border border-blue-500/30"
                     : isVaultly
