@@ -27,8 +27,19 @@ def display_query_result(result, query: str, graph_name: str):
             console.print(f"[dim]{result.statistics}[/dim]")
         return
 
-    # Extract headers
-    headers = [str(header) if not isinstance(header, list) else str(header[0]) for header in result.header] if hasattr(result, "header") else [f"col_{i}" for i in range(len(result.result_set[0]))]
+    # Extract headers (FalkorDB returns [[type_id, 'col_name'], ...])
+    headers = []
+    if hasattr(result, "header") and result.header:
+        for h in result.header:
+            if isinstance(h, (list, tuple)) and len(h) > 1:
+                headers.append(str(h[1]))
+            elif isinstance(h, (list, tuple)) and len(h) == 1:
+                headers.append(str(h[0]))
+            else:
+                headers.append(str(h))
+    else:
+        headers = [f"col_{i}" for i in range(len(result.result_set[0]))]
+
 
     table = Table(title=f"Graph: {graph_name} | Query: {query[:60]}...", show_lines=True)
     for h in headers:
