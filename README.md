@@ -37,14 +37,22 @@ chaos-resolver-folkordb/
 │   ├── schema/
 │   │   ├── models.py               # Strict Pydantic models (Person, Team, System, etc.)
 │   │   └── cypher_schema.py        # Schema labels, relationships, indexing, & Cypher generators
+│   ├── embeddings/
+│   │   └── service.py              # Normalized 384-dim semantic embedding service (Local & OpenAI)
+│   ├── pipeline/
+│   │   ├── vector_index.py         # FalkorDB native vector indexing (db.idx.vector) & embedding population
+│   │   └── auto_linker.py          # Hybrid Vector + Graph Auto-Linker Engine (threshold >= 0.82)
 │   ├── data/
 │   │   ├── synthetic_data.py       # Realistic FinPay + Vaultly M&A dilemma dataset
 │   │   ├── builder.py              # Multigraph Cypher statement compiler & exporter
 │   │   └── seed.py                 # CLI seeder for FalkorDB & artifact generator
+│   ├── cli.py                      # Interactive FalkorDB REPL & CLI tool
 │   └── utils/
 │       └── logger.py               # Standardized application logging
 └── tests/
-    └── test_schema_and_dataset.py  # 9 test suites validating schema, edge integrity, & collisions
+    ├── test_schema_and_dataset.py  # Schema, edge integrity, collision guards (9 tests)
+    └── test_auto_linker.py         # Vector embeddings & auto-linker resolution (4 tests)
+
 ```
 
 ---
@@ -123,8 +131,19 @@ Seed all 3 graphs (`finpay_graph`, `vaultly_graph`, `merged_brain`) to FalkorDB:
 python -m src.data.seed --clear --verify
 ```
 
-### 4. Run Test Suite
+### 4. Run Phase 2 M&A Auto-Linker Engine
+Embeds nodes using 384-dimensional dense vectors, indexes them in FalkorDB, and links cross-company redundancies (`[:REDUNDANT_WITH]`) and contradictions (`[:CONFLICTS_WITH]`) where similarity >= 0.82:
+```bash
+python -m src.pipeline.auto_linker --graph merged_brain --threshold 0.82
+```
+Or run interactively inside the CLI:
+```bash
+python -m src.cli auto-link --graph merged_brain
+```
+
+### 5. Run Test Suite
 ```bash
 pytest tests/ -v
 ```
-All 9 unit tests pass verifying model constraints, edge referential integrity, collision protection, and query bounding.
+All **13 unit tests** pass verifying schema constraints, edge referential integrity, collision protection, query bounding, vector embeddings, and hybrid resolution.
+

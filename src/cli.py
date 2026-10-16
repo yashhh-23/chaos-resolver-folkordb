@@ -97,6 +97,7 @@ def interactive_repl(initial_graph: Optional[str] = None):
             f"  [yellow]use <graph>[/yellow]   Switch active graph ({settings.graph_finpay}, {settings.graph_vaultly}, {settings.graph_merged})\n"
             f"  [yellow]graphs[/yellow]        List all graphs\n"
             f"  [yellow]seed[/yellow]          Run Phase 1 seeder\n"
+            f"  [yellow]auto-link[/yellow]     Run Phase 2 M&A Auto-Linker Engine\n"
             f"  [yellow]exit[/yellow] / [yellow]quit[/yellow]    Exit shell\n"
             f"  Or enter any Cypher query directly (e.g. [green]MATCH (n) RETURN count(n)[/green])",
             title="FalkorDB REPL",
@@ -130,6 +131,10 @@ def interactive_repl(initial_graph: Optional[str] = None):
             elif lower == "seed":
                 console.print("[cyan]Seeding all graphs...[/cyan]")
                 seed_all_graphs(clear_first=False)
+            elif lower in ["auto-link", "autolink"]:
+                from src.pipeline.auto_linker import auto_linker_engine
+                console.print(f"[cyan]Running Auto-Linker Engine on '{current_graph}'...[/cyan]")
+                auto_linker_engine.run_pipeline(current_graph)
             else:
                 run_query(current_graph, line)
         except (KeyboardInterrupt, EOFError):
@@ -153,14 +158,24 @@ def main():
     # list-graphs subcommand
     subparsers.add_parser("list-graphs", help="List all graphs in FalkorDB")
 
+    # auto-link subcommand
+    link_parser = subparsers.add_parser("auto-link", help="Execute M&A Auto-Linker Engine")
+    link_parser.add_argument("--graph", default=settings.graph_merged, help="Target graph to link")
+    link_parser.add_argument("--threshold", type=float, default=0.82, help="Similarity threshold (default 0.82)")
+
     args = parser.parse_args()
 
     if args.subcommand == "query":
         run_query(args.graph, args.cypher)
     elif args.subcommand == "list-graphs":
         list_graphs()
+    elif args.subcommand == "auto-link":
+        from src.pipeline.auto_linker import AutoLinkerEngine
+        engine = AutoLinkerEngine(threshold=args.threshold)
+        engine.run_pipeline(args.graph)
     else:
         interactive_repl(getattr(args, "graph", settings.graph_merged))
+
 
 
 if __name__ == "__main__":
