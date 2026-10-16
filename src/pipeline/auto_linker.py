@@ -86,7 +86,15 @@ class AutoLinkerEngine:
                     props = node.properties if hasattr(node, "properties") else {}
                     if props.get("company_origin") == company_b:
                         vl_id = props.get("id")
-                        cos_sim = round(max(0.0, 1.0 - float(distance)), 2)
+                        vl_info = vl_systems.get(vl_id)
+                        if vl_info:
+                            vl_vec = embedding_service.embed_text(
+                                system_embedding_text(vl_info["name"], vl_info["domain"], vl_info["tech"], vl_info["desc"])
+                            )
+                            # Compute canonical cosine similarity directly to avoid engine distance metric ambiguity
+                            cos_sim = embedding_service.cosine_similarity(fp_vec, vl_vec)
+                        else:
+                            cos_sim = round(max(0.0, 1.0 - float(distance)), 2)
                         candidates.append((vl_id, cos_sim))
             else:
                 candidates = []
@@ -109,19 +117,27 @@ class AutoLinkerEngine:
                 common_apis = fp_apis_set.intersection(vl_apis_set)
                 graph_bonus = settings.auto_linker_graph_bonus_per_api * len(common_apis)
 
-                # Domain alignment boost
-                domain_bonus = (
-                    settings.auto_linker_domain_bonus
-                    if fp_domain and vl_domain and fp_domain.lower() == vl_domain.lower()
-                    else 0.0
-                )
+                # Domain alignment boost:
+                # Applied when domains match, but matching domain alone without shared external APIs
+                # or high base semantic similarity must never promote false-positive redundancies
+                # (e.g., internal service mesh vs external public API gateway).
+                has_same_domain = bool(fp_domain and vl_domain and fp_domain.lower() == vl_domain.lower())
+                name_collision = bool(fp_name.lower() == vl_name.lower())
+
+                if has_same_domain and (common_apis or name_collision or cos_sim >= self.threshold):
+                    domain_bonus = settings.auto_linker_domain_bonus
+                else:
+                    domain_bonus = 0.0
 
                 combined_score = min(settings.auto_linker_max_score, round(cos_sim + graph_bonus + domain_bonus, 2))
 
                 if combined_score >= self.threshold:
-                    reason_parts = [f"Semantic similarity: {cos_sim:.2f} (domain: {fp_domain})"]
+                    matched_domain = fp_domain if has_same_domain else f"{fp_domain}/{vl_domain}"
+                    reason_parts = [f"Semantic similarity: {cos_sim:.2f} (domain: {matched_domain})"]
                     if common_apis:
                         reason_parts.append(f"shared external API calls: {list(common_apis)}")
+                    elif domain_bonus > 0 and (has_same_domain or name_collision):
+                        reason_parts.append("domain alignment boost")
                     reason = " | ".join(reason_parts)
 
                     # Create/Merge edge in FalkorDB
@@ -189,8 +205,16 @@ class AutoLinkerEngine:
                     props = node.properties if hasattr(node, "properties") else {}
                     if props.get("company_origin") == company_b:
                         vl_id = props.get("id")
-                        sim = round(max(0.0, 1.0 - float(distance)), 2)
+                        vl_info = vl_map.get(vl_id)
+                        if vl_info:
+                            vl_vec = embedding_service.embed_text(
+                                policy_embedding_text(vl_info["name"], vl_info["domain"], vl_info["desc"])
+                            )
+                            sim = embedding_service.cosine_similarity(fp_vec, vl_vec)
+                        else:
+                            sim = round(max(0.0, 1.0 - float(distance)), 2)
                         candidates.append((vl_id, sim))
+
             else:
                 candidates = []
                 for vl_id, vl_info in vl_map.items():
@@ -299,8 +323,16 @@ class AutoLinkerEngine:
                     props = node.properties if hasattr(node, "properties") else {}
                     if props.get("company_origin") == company_b:
                         vl_id = props.get("id")
-                        sim = round(max(0.0, 1.0 - float(distance)), 2)
+                        vl_info = vl_map.get(vl_id)
+                        if vl_info:
+                            vl_vec = embedding_service.embed_text(
+                                decision_embedding_text(vl_info["summary"], vl_info["auth"], vl_info["source"])
+                            )
+                            sim = embedding_service.cosine_similarity(fp_vec, vl_vec)
+                        else:
+                            sim = round(max(0.0, 1.0 - float(distance)), 2)
                         candidates.append((vl_id, sim))
+
             else:
                 candidates = []
                 for vl_id, vl_info in vl_map.items():

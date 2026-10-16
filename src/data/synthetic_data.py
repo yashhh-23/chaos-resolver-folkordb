@@ -683,17 +683,6 @@ def get_ma_bridge_relationships() -> List[Relationship]:
             },
         ),
         Relationship(
-            source_id="finpay:sys:finpay_mesh_gateway",
-            target_id="vaultly:sys:vaultly_public_api",
-            rel_type="REDUNDANT_WITH",
-            properties={
-                "similarity": 0.82,
-                "reason": "Semantic similarity: 0.82 (domain: Core Services)",
-                "auto_detected": True,
-                "method": "hybrid_vector_graph",
-            },
-        ),
-        Relationship(
             source_id="finpay:sys:core_api",
             target_id="vaultly:sys:core_api",
             rel_type="REDUNDANT_WITH",
@@ -704,6 +693,7 @@ def get_ma_bridge_relationships() -> List[Relationship]:
                 "method": "hybrid_vector_graph",
             },
         ),
+
         # Conflicting Decisions
         Relationship(
             source_id="finpay:dec:jwt_15m",
