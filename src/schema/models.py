@@ -7,6 +7,7 @@ class CompanyOrigin(str, Enum):
     FINPAY = "FinPay"
     VAULTLY = "Vaultly"
     EXTERNAL = "External"
+    UNIFIED = "Unified"
 
 
 class StatusEnum(str, Enum):

@@ -25,7 +25,14 @@ class FalkorDBClient:
     def connect(self) -> falkordb.FalkorDB:
         """Establishes or returns the existing FalkorDB connection."""
         if self._db is not None and self._connected:
-            return self._db
+            try:
+                # Active connection liveness check to prevent stale connection reuse
+                _ = self._db.list_graphs()
+                return self._db
+            except Exception as e:
+                logger.warning(f"Cached FalkorDB connection was lost ({e}), reconnecting...")
+                self._connected = False
+                self._db = None
 
         try:
             if settings.falkordb_url:
@@ -51,6 +58,7 @@ class FalkorDBClient:
             return self._db
         except Exception as e:
             self._connected = False
+            self._db = None
             logger.warning(
                 f"Could not connect to FalkorDB: {e}. "
                 "Ensure local Docker container ('docker-compose up -d') or FalkorDB Cloud instance is active."
@@ -60,11 +68,14 @@ class FalkorDBClient:
     def is_connected(self) -> bool:
         """Checks if FalkorDB is currently reachable."""
         try:
-            if self._db is None:
+            if self._db is None or not self._connected:
                 self.connect()
-            _ = self._db.list_graphs()
+            else:
+                _ = self._db.list_graphs()
             return True
         except Exception:
+            self._connected = False
+            self._db = None
             return False
 
     def get_graph(self, graph_name: str) -> falkordb.Graph:

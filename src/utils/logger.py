@@ -1,9 +1,12 @@
+from typing import Optional
 import logging
 import sys
+from src.config import settings
 
 
-def setup_logger(name: str = "orgbridge", level: str = "INFO") -> logging.Logger:
-    """Configures and returns a consistent logger."""
+def setup_logger(name: str = "orgbridge", level: Optional[str] = None) -> logging.Logger:
+    """Configures and returns a consistent logger respecting configured LOG_LEVEL."""
+    log_level_str = level or getattr(settings, "log_level", "INFO") or "INFO"
     logger = logging.getLogger(name)
     if not logger.handlers:
         handler = logging.StreamHandler(sys.stdout)
@@ -13,7 +16,7 @@ def setup_logger(name: str = "orgbridge", level: str = "INFO") -> logging.Logger
         )
         handler.setFormatter(formatter)
         logger.addHandler(handler)
-    logger.setLevel(getattr(logging, level.upper(), logging.INFO))
+    logger.setLevel(getattr(logging, log_level_str.upper(), logging.INFO))
     return logger
 
 

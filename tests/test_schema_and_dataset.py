@@ -34,6 +34,8 @@ def test_allowed_labels_and_relationships():
     assert "Decision" in ALLOWED_LABELS
     assert "REDUNDANT_WITH" in ALLOWED_RELATIONSHIPS
     assert "CONFLICTS_WITH" in ALLOWED_RELATIONSHIPS
+    assert "SUPERSEDES" in ALLOWED_RELATIONSHIPS
+    assert CompanyOrigin.UNIFIED.value == "Unified"
 
 
 def test_cypher_query_sanitizer():
@@ -42,6 +44,12 @@ def test_cypher_query_sanitizer():
     bounded = sanitize_cypher_query(unbounded, max_hops=4)
     assert "[*1..4]" in bounded
     assert "LIMIT 25" in bounded
+
+    # Test bounding of [*..10], [r*], [:OWNS*], [r:OWNS*..10]
+    assert "[*1..4]" in sanitize_cypher_query("MATCH (a)-[*..10]->(b) RETURN a")
+    assert "[r*1..4]" in sanitize_cypher_query("MATCH (a)-[r*]->(b) RETURN a")
+    assert "[:OWNS*1..4]" in sanitize_cypher_query("MATCH (a)-[:OWNS*]->(b) RETURN a")
+    assert "[r:OWNS*1..4]" in sanitize_cypher_query("MATCH (a)-[r:OWNS*..12]->(b) RETURN a")
 
     # Test preserving queries that already have a limit
     already_limited = "MATCH (n:Person) RETURN n LIMIT 10"

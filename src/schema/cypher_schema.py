@@ -27,6 +27,7 @@ ALLOWED_RELATIONSHIPS = [
     "DERIVED_FROM",
     "REDUNDANT_WITH",
     "CONFLICTS_WITH",
+    "SUPERSEDES",
 ]
 
 INDEX_QUERIES: List[str] = [
@@ -46,13 +47,38 @@ def sanitize_cypher_query(query: str, max_hops: int = 4, default_limit: int = 25
     """Enforces hop-depth protection and LIMIT clauses on Cypher queries.
 
     Guards against LLM Cypher Hallucination & Infinite Traversal Loops (Edge Case #4).
-    Replaces unbound variable-length paths [*] or [*..N] with bounded [*1..max_hops],
-    and appends a LIMIT clause if not present.
+    Replaces unbound or excessive variable-length paths [*], [*..N], [r*], [:REL*]
+    with bounded [*1..max_hops], and appends a LIMIT clause if not present.
     """
     cleaned = query.strip()
 
-    # Replace unbounded [*] with bounded [*1..max_hops]
-    cleaned = re.sub(r'\[\*\]', f'[*1..{max_hops}]', cleaned)
+    # Match variable-length patterns: [*], [*..10], [r*], [:OWNS*], [r:OWNS*..10], etc.
+    var_len_pattern = r'\[\s*([a-zA-Z0-9_]*)\s*(?::([a-zA-Z0-9_|]+))?\s*\*\s*(\d*(?:\.\.\d*)?)?\s*\]'
+
+    def _bound_var_hops(match: re.Match) -> str:
+        var = match.group(1) or ""
+        rel = match.group(2)
+        range_str = match.group(3) or ""
+        prefix = f"{var}:{rel}" if rel else var
+
+        if not range_str:
+            return f"[{prefix}*1..{max_hops}]"
+        elif range_str.startswith(".."):
+            up = int(range_str[2:])
+            return f"[{prefix}*1..{min(up, max_hops)}]"
+        elif range_str.endswith(".."):
+            low = min(int(range_str[:-2]), max_hops)
+            return f"[{prefix}*{low}..{max_hops}]"
+        elif ".." in range_str:
+            parts = range_str.split("..")
+            low = min(int(parts[0]), max_hops)
+            up = min(int(parts[1]), max_hops)
+            return f"[{prefix}*{low}..{up}]"
+        else:
+            val = int(range_str)
+            return f"[{prefix}*{min(val, max_hops)}]"
+
+    cleaned = re.sub(var_len_pattern, _bound_var_hops, cleaned)
 
     # Ensure query has LIMIT if it's a MATCH / RETURN query and doesn't already have one
     if "RETURN" in cleaned.upper() and "LIMIT" not in cleaned.upper():
