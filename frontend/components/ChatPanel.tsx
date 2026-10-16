@@ -73,21 +73,30 @@ function escapeHtml(str: string): string {
 }
 
 function formatInline(str: string): string {
-  return str
-    // Inline code: `code`
-    .replace(
-      /`([^`]+)`/g,
-      '<code class="bg-slate-950 text-cyan-300 px-1 py-0.5 rounded font-mono text-[11px] border border-slate-800">$1</code>'
-    )
-    // Bold: **bold**
-    .replace(/\*\*([^*]+)\*\*/g, '<strong class="font-bold text-white">$1</strong>')
-    // Italic: *italic*
-    .replace(/\*([^*]+)\*/g, '<em class="text-slate-300">$1</em>')
-    // Links: [text](url)
-    .replace(
-      /\[(.*?)\]\(((?:https?:\/\/|\/|mailto:)[^\s"'>]+)\)/g,
-      '<a href="$2" target="_blank" rel="noopener noreferrer" class="text-cyan-400 underline underline-offset-2 hover:text-cyan-300 font-medium">$1</a>'
+  const codeSpans: string[] = [];
+  // 1. Extract inline code spans and replace with placeholder to protect internal asterisks/brackets
+  let processed = str.replace(/`([^`]+)`/g, (_, code) => {
+    const idx = codeSpans.length;
+    codeSpans.push(
+      `<code class="bg-slate-950 text-cyan-300 px-1 py-0.5 rounded font-mono text-[11px] border border-slate-800">${code}</code>`
     );
+    return `___INLINE_CODE_${idx}___`;
+  });
+
+  // 2. Bold: **bold**
+  processed = processed.replace(/\*\*([^*]+)\*\*/g, '<strong class="font-bold text-white">$1</strong>');
+
+  // 3. Italic: *italic*
+  processed = processed.replace(/\*([^*]+)\*/g, '<em class="text-slate-300">$1</em>');
+
+  // 4. Links: [text](url)
+  processed = processed.replace(
+    /\[(.*?)\]\(((?:https?:\/\/|\/|mailto:)[^\s"'>]+)\)/g,
+    '<a href="$2" target="_blank" rel="noopener noreferrer" class="text-cyan-400 underline underline-offset-2 hover:text-cyan-300 font-medium">$1</a>'
+  );
+
+  // 5. Restore protected code spans
+  return processed.replace(/___INLINE_CODE_(\d+)___/g, (_, idx) => codeSpans[Number(idx)] || "");
 }
 
 function renderSafeMarkdown(text: string): string {
@@ -187,6 +196,7 @@ function renderSafeMarkdown(text: string): string {
 interface ChatPanelProps {
   onSubgraphUpdate: (subgraph: SubgraphData | null) => void;
   onFullGraphRefresh?: (freshData?: SubgraphData) => Promise<void> | void;
+  onBackendHealthy?: () => void;
   isBackendHealthy: boolean;
   graphData?: SubgraphData;
 }
@@ -240,6 +250,7 @@ const CRISIS_PROMPTS = [
 export default function ChatPanel({
   onSubgraphUpdate,
   onFullGraphRefresh,
+  onBackendHealthy,
   isBackendHealthy,
   graphData,
 }: ChatPanelProps) {
@@ -299,6 +310,7 @@ export default function ChatPanel({
 
     try {
       const res: ToolResponse = await callTool(crisis.endpoint, crisis.payload);
+      onBackendHealthy?.();
       const agentMsg: Message = {
         id: (Date.now() + 1).toString(),
         sender: "agent",
@@ -341,6 +353,7 @@ export default function ChatPanel({
 
     try {
       const res = await mutateGraph(action);
+      onBackendHealthy?.();
       const agentMsg: Message = {
         id: (Date.now() + 1).toString(),
         sender: "agent",
@@ -576,9 +589,11 @@ export default function ChatPanel({
       try {
         // Primary path: Autonomous Groq Llama-3.3-70B agent + Schema-Constrained Cypher (/api/chat)
         res = await chatWithAgent(userText);
+        onBackendHealthy?.();
       } catch (agentErr) {
         // Fallback path: Deterministic client-side tool routing if /api/chat is unreachable
         res = await callTool(endpoint, payload);
+        onBackendHealthy?.();
       }
 
       setMessages((prev) => [

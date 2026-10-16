@@ -47,6 +47,32 @@ export default function WarRoomDashboard() {
     loadGraphData();
   }, [selectedGraph]);
 
+  // Periodic background health check & live graph recovery when backend is waking up from cold start
+  useEffect(() => {
+    if (isHealthy) return;
+
+    const interval = setInterval(async () => {
+      try {
+        const health = await checkBackendHealth();
+        if (health.falkordb_connected) {
+          setIsHealthy(true);
+          if (health.active_graphs && Array.isArray(health.active_graphs) && health.active_graphs.length > 0) {
+            setAvailableGraphs(health.active_graphs);
+          }
+          // Seamlessly swap static fallback preview with live FalkorDB multigraph
+          const data = await fetchFullSubgraph(selectedGraph);
+          if (data && data.nodes && data.nodes.length > 0) {
+            setGraphData(data);
+          }
+        }
+      } catch {
+        // Backend still spinning up on cold start...
+      }
+    }, 4000);
+
+    return () => clearInterval(interval);
+  }, [isHealthy, selectedGraph]);
+
   const handleSubgraphUpdate = (subgraph: SubgraphData | null) => {
     setActiveSubgraph(subgraph);
     // Auto-select first node if available to show inspector
@@ -58,10 +84,14 @@ export default function WarRoomDashboard() {
   const handleFullGraphRefresh = async (freshData?: SubgraphData): Promise<void> => {
     if (freshData && freshData.nodes && freshData.nodes.length > 0) {
       setGraphData(freshData);
+      setIsHealthy(true);
     } else {
       try {
         const d = await fetchFullSubgraph(selectedGraph);
-        if (d && d.nodes) setGraphData(d);
+        if (d && d.nodes) {
+          setGraphData(d);
+          setIsHealthy(true);
+        }
       } catch (err) {
         console.warn("Could not refresh full graph:", err);
       }
@@ -74,6 +104,7 @@ export default function WarRoomDashboard() {
       <ChatPanel
         onSubgraphUpdate={handleSubgraphUpdate}
         onFullGraphRefresh={handleFullGraphRefresh}
+        onBackendHealthy={() => setIsHealthy(true)}
         isBackendHealthy={isHealthy}
         graphData={graphData}
       />
