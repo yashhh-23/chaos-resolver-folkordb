@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { X, ShieldCheck, Cpu, User, FileText } from "lucide-react";
+import { X, ShieldCheck, Cpu, User, FileText, Users } from "lucide-react";
 import { GraphNode } from "@/lib/api";
 
 interface NodeInspectorModalProps {
@@ -14,6 +14,7 @@ export default function NodeInspectorModal({ node, onClose }: NodeInspectorModal
 
   const isFinPay = node.company_origin === "FinPay";
   const isVaultly = node.company_origin === "Vaultly";
+  const isUnified = node.company_origin === "Unified";
 
   const getIcon = () => {
     switch (node.label) {
@@ -21,6 +22,8 @@ export default function NodeInspectorModal({ node, onClose }: NodeInspectorModal
         return <User className="w-5 h-5 text-blue-400" />;
       case "System":
         return <Cpu className="w-5 h-5 text-emerald-400" />;
+      case "Team":
+        return <Users className="w-5 h-5 text-cyan-400" />;
       case "Policy":
       case "Decision":
         return <ShieldCheck className="w-5 h-5 text-amber-400" />;
@@ -50,6 +53,8 @@ export default function NodeInspectorModal({ node, onClose }: NodeInspectorModal
                     ? "bg-blue-600/30 text-blue-300 border border-blue-500/30"
                     : isVaultly
                     ? "bg-orange-600/30 text-orange-300 border border-orange-500/30"
+                    : isUnified
+                    ? "bg-emerald-600/30 text-emerald-300 border border-emerald-500/30"
                     : "bg-purple-600/30 text-purple-300 border border-purple-500/30"
                 }`}
               >

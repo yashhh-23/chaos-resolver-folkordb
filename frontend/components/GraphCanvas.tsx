@@ -108,6 +108,7 @@ export default function GraphCanvas({
     }
     if (node.company_origin === "FinPay") return "#3b82f6"; // Blue
     if (node.company_origin === "Vaultly") return "#f97316"; // Orange
+    if (node.company_origin === "Unified") return "#10b981"; // Emerald for post-M&A unified entities
     return "#a855f7"; // Purple for external / shared
   };
 
@@ -131,7 +132,7 @@ export default function GraphCanvas({
       )}
 
       {/* Top Overlay Legend & Status */}
-      <div className="absolute top-4 left-4 z-10 flex flex-wrap gap-2 items-center text-xs bg-slate-900/80 backdrop-blur-md px-3 py-2 rounded-lg border border-slate-800 text-slate-300 shadow-xl">
+      <div className="absolute top-16 left-4 z-10 flex flex-wrap gap-2 items-center text-xs bg-slate-900/80 backdrop-blur-md px-3 py-2 rounded-lg border border-slate-800 text-slate-300 shadow-xl">
         <div className="flex items-center gap-1.5">
           <span className="w-2.5 h-2.5 rounded-full bg-blue-500 shadow-[0_0_8px_#3b82f6]"></span>
           <span className="font-semibold text-blue-400">FinPay (Acquirer)</span>
@@ -139,6 +140,10 @@ export default function GraphCanvas({
         <div className="flex items-center gap-1.5 ml-2">
           <span className="w-2.5 h-2.5 rounded-full bg-orange-500 shadow-[0_0_8px_#f97316]"></span>
           <span className="font-semibold text-orange-400">Vaultly (Target)</span>
+        </div>
+        <div className="flex items-center gap-1.5 ml-2">
+          <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 shadow-[0_0_8px_#10b981]"></span>
+          <span className="font-semibold text-emerald-400">Unified (Post-M&A)</span>
         </div>
         <div className="flex items-center gap-1.5 ml-2">
           <span className="w-2.5 h-2.5 rounded-full bg-purple-500"></span>
