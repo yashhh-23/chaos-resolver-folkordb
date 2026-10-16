@@ -1,7 +1,7 @@
 # The M&A Chaos Resolver (OrgBridge AI) 🧠⚡
 
 > **FalkorDB Hackathon (Track 03: Company Brain)**  
-> Turning M&A chaos into deterministic knowledge using FalkorDB's multigraph tenancy, native graph algorithms, and hybrid vector entity resolution.
+> Turning M&A chaos into deterministic knowledge using FalkorDB's multigraph tenancy, bounded graph path traversals, SME influence ranking, and hybrid vector entity resolution.
 
 ---
 
@@ -12,7 +12,7 @@ During an M&A (e.g., FinPay acquiring Vaultly), organizations face duplicate mic
 OrgBridge AI leverages **FalkorDB** as the heart of the system across four core capabilities:
 1. **Multigraph Tenancy**: Physical graph isolation (`finpay_graph` for Company A, `vaultly_graph` for Company B) and an integrated layer (`merged_brain`) for cross-company entity resolution.
 2. **Hybrid Graph + Vector Entity Resolution**: Identifies redundant systems and policy contradictions with shared external dependencies (`ExternalAPI` like UIDAI Aadhaar, Stripe, AWS KMS).
-3. **Graph Algorithms as Agent Tools**: PageRank for real expert discovery (based on authored RFCs & resolved incidents) and Shortest Path for warm introductions across company borders.
+3. **Graph-Powered Agent Tools**: SME influence ranking (evaluating stored PageRank centrality properties alongside authored RFCs & resolved incidents) and bounded path traversal (`[*1..4]`) for warm introductions across company borders.
 4. **Decision & Policy Conflict Lineage**: Explicit `[:CONFLICTS_WITH]` and `[:DERIVED_FROM]` edges tracing rules directly back to source Slack threads, Jira tickets, and RFC documents.
 
 ---
@@ -107,7 +107,7 @@ chaos-resolver-folkordb/
 1. **Entity Collision (Same Name, Different Person/Service):**
    - Namespaced node IDs (`finpay:person:rahul_s` vs `vaultly:person:rahul_s`) and mandatory `company_origin` property prevent `MERGE` statements from collapsing distinct people or services.
 2. **Terminology Mismatch (Different Name, Same Concept):**
-   - e.g. `Customer-KYC-Service` (FinPay) vs `User-Onboarding-Verification` (Vaultly). Connected through shared external dependency `(:ExternalAPI {id: 'ext:api:uidai_aadhaar'})` and tagged with `[:REDUNDANT_WITH {similarity: 0.95}]`.
+   - e.g. `Customer-KYC-Service` (FinPay) vs `User-Onboarding-Verification` (Vaultly). Connected through shared external dependency `(:ExternalAPI {id: 'ext:api:uidai_aadhaar'})` and tagged with `[:REDUNDANT_WITH {similarity: 0.99}]`.
 3. **Policy Contradictions & Temporal Precedence:**
    - Evaluates `effective_date`, `authority_level`, and `status`. E.g., FinPay's 15-minute JWT expiration (`finpay:dec:jwt_15m`) directly conflicts with Vaultly's 7-day persistent mobile session tokens (`vaultly:dec:session_7d`).
 4. **LLM Cypher Hallucination & Infinite Traversal Safeguard:**
@@ -158,7 +158,7 @@ python -m src.cli auto-link --graph merged_brain
 ### 5. Run Phase 3 Deterministic Agent Tools (CLI / MCP / REST)
 Execute any of the 5 core tools with human-readable evidence and visual Subgraph JSON:
 ```bash
-# 1. SME Expert Discovery (PageRank + authored RFCs)
+# 1. SME Expert Discovery (PageRank property + authored RFCs)
 python -m src.cli tool find-expert --topic "Authentication" --company Vaultly
 
 # 2. Policy & Compliance Conflict Detection
@@ -170,7 +170,7 @@ python -m src.cli tool redundant
 # 4. Decision Lineage & Conflict Tracing
 python -m src.cli tool lineage --system "Gatekeeper-Auth"
 
-# 5. Warm Introduction Shortest Path Traversal
+# 5. Warm Introduction Bounded Path Traversal ([*1..4])
 python -m src.cli tool warm-intro --person-a "Aarav Mehta" --person-b "Diya Nair"
 ```
 
@@ -218,7 +218,7 @@ python -m src.cli mutate reset-demo
 ```bash
 pytest tests/ -v
 ```
-All **24 unit & integration tests** pass across:
+All **25 unit & integration tests** pass across:
 - Multigraph schema integrity, node collisions, and bridge relations (`test_schema_and_dataset.py`)
 - Dense 384-dim normalized vector embeddings and hybrid auto-linker (`test_auto_linker.py`)
 - Deterministic M&A agent tools, MCP schemas, and FastAPI endpoints (`test_agent_tools.py`)
