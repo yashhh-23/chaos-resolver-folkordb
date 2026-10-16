@@ -67,3 +67,14 @@ def test_merge_teams(mutation_engine):
     records = graph.query(q).result_set
     assert len(records) > 0
     assert records[0][0] >= 2
+
+
+def test_reset_demo(mutation_engine):
+    """Verifies that reset_demo restores multigraphs and returns fresh subgraph."""
+    res = mutation_engine.reset_demo(include_subgraph=True)
+    assert res["status"] == "success"
+    assert res["action"] == "reset_demo"
+    assert "subgraph" in res
+    assert len(res["subgraph"]["nodes"]) > 0
+    assert len(res["subgraph"]["edges"]) > 0
+    assert "pipeline_summary" in res

@@ -276,5 +276,62 @@ class LiveMutationEngine:
             "subgraph": subgraph.model_dump(),
         }
 
+    def reset_demo(self, include_subgraph: bool = True) -> Dict[str, Any]:
+        """Resets FalkorDB multigraphs to pristine initial Phase 1/2 state."""
+        from src.data.seed import seed_all_graphs
+        from src.pipeline.auto_linker import auto_linker_engine
+
+        logger.info(f"[{self.graph_name}] Resetting demo multigraphs in FalkorDB...")
+        seed_all_graphs(clear_first=True)
+        pipeline_summary = auto_linker_engine.run_pipeline(self.graph_name)
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        result: Dict[str, Any] = {
+            "action": "reset_demo",
+            "status": "success",
+            "timestamp": now_str,
+            "message": "FalkorDB multigraphs reset and auto-linked successfully.",
+            "pipeline_summary": pipeline_summary,
+        }
+
+        if include_subgraph:
+            subgraph = Subgraph()
+            g = self._get_graph()
+            node_res = g.query("""
+                MATCH (n)
+                RETURN n.id as id,
+                       coalesce(n.name, n.title, n.summary, n.id) as display_name,
+                       labels(n)[0] as label,
+                       coalesce(n.company_origin, 'External') as company,
+                       properties(n) as props
+                LIMIT 100
+            """)
+            for row in node_res.result_set:
+                subgraph.add_node(
+                    node_id=row[0],
+                    name=row[1],
+                    label=row[2],
+                    company=row[3],
+                    props=row[4] if isinstance(row[4], dict) else {},
+                )
+
+            valid_node_ids = {n.id for n in subgraph.nodes}
+            rel_res = g.query("""
+                MATCH (a)-[r]->(b)
+                RETURN a.id, b.id, type(r), properties(r)
+                LIMIT 150
+            """)
+            for row in rel_res.result_set:
+                if row[0] in valid_node_ids and row[1] in valid_node_ids:
+                    subgraph.add_edge(
+                        source=row[0],
+                        target=row[1],
+                        rel_type=row[2],
+                        props=row[3] if isinstance(row[3], dict) else {},
+                    )
+            result["subgraph"] = subgraph.model_dump()
+
+        return result
+
 
 live_mutations = LiveMutationEngine()

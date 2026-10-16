@@ -219,18 +219,9 @@ def merge_teams():
 @app.post("/api/mutate/reset-demo")
 def reset_demo_graph():
     """Resets FalkorDB multigraphs to pristine initial Phase 1/2 state."""
-    from src.data.seed import seed_all_graphs
-    from src.pipeline.auto_linker import auto_linker_engine
+    from src.pipeline.mutations import live_mutations
     try:
-        logger.info("Resetting demo multigraphs in FalkorDB...")
-        seed_all_graphs(clear_first=True)
-        auto_linker_engine.run_pipeline(settings.graph_merged)
-        fresh_subgraph = get_graph_visualization(settings.graph_merged)
-        return {
-            "status": "success",
-            "message": "FalkorDB multigraphs reset and auto-linked successfully.",
-            "subgraph": fresh_subgraph.model_dump(),
-        }
+        return live_mutations.reset_demo(include_subgraph=True)
     except Exception as e:
         logger.error(f"Error in reset_demo_graph: {e}")
         raise HTTPException(status_code=500, detail=str(e))

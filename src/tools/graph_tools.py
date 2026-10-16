@@ -17,7 +17,6 @@ from pydantic import BaseModel, Field
 from src.config import settings
 from src.utils.logger import logger
 from src.db.client import db_client
-from src.schema.cypher_schema import sanitize_cypher_query
 
 
 class SubgraphNode(BaseModel):

@@ -13,7 +13,6 @@ from rich.panel import Panel
 
 from src.config import settings
 from src.db.client import db_client
-from src.schema.cypher_schema import sanitize_cypher_query
 from src.data.seed import seed_all_graphs
 
 console = Console()
@@ -65,8 +64,7 @@ def display_query_result(result, query: str, graph_name: str):
 def run_query(graph_name: str, query: str):
     """Executes a single query and prints formatted results."""
     try:
-        sanitized = sanitize_cypher_query(query)
-        res = db_client.query(graph_name, sanitized, sanitize=False)
+        res = db_client.query(graph_name, query, sanitize=True)
         display_query_result(res, query, graph_name)
     except Exception as e:
         console.print(f"[bold red]Query Error:[/bold red] {e}")
@@ -246,12 +244,10 @@ def main():
             res = live_mutations.merge_teams()
             console.print(Panel(f"[green]Status: {res['status']}[/green]\n[bold]{res['resolution_summary']}[/bold]", title="Live Mutation: Merge Teams", border_style="green"))
         elif args.mutate_action == "reset-demo":
-            from src.data.seed import seed_all_graphs
-            from src.pipeline.auto_linker import auto_linker_engine
+            from src.pipeline.mutations import live_mutations
             console.print("[cyan]Resetting demo multigraphs in FalkorDB...[/cyan]")
-            seed_all_graphs(clear_first=True)
-            auto_linker_engine.run_pipeline(settings.graph_merged)
-            console.print("[bold green]FalkorDB multigraphs reset and auto-linked successfully.[/bold green]")
+            res = live_mutations.reset_demo(include_subgraph=False)
+            console.print(f"[bold green]{res['message']}[/bold green]")
         else:
             mutate_parser.print_help()
     else:
