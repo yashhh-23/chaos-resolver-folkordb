@@ -1,0 +1,28 @@
+services:
+  - type: web
+    name: orgbridge-ai-backend
+    runtime: python
+    region: oregon
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn src.api.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: FALKORDB_HOST
+        sync: false
+      - key: FALKORDB_PORT
+        value: "55015"
+      - key: FALKORDB_USERNAME
+        value: falkordb
+      - key: FALKORDB_PASSWORD
+        sync: false
+      - key: FALKORDB_SSL
+        value: "false"
+      - key: GRAPH_FINPAY
+        value: finpay_graph
+      - key: GRAPH_VAULTLY
+        value: vaultly_graph
+      - key: GRAPH_MERGED
+        value: merged_brain
+      - key: ENVIRONMENT
+        value: production
