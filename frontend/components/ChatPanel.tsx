@@ -402,67 +402,72 @@ export default function ChatPanel({
     let payload: any = {};
     const lower = userText.toLowerCase();
 
-    // 1. Warm Intro Path
-    if (
-      lower.includes("intro") ||
-      lower.includes("connect") ||
-      lower.includes("path") ||
-      lower.includes("reach") ||
-      lower.includes("introduce") ||
-      lower.includes("warm")
-    ) {
-      endpoint = "warm-intro-path";
-      // Find known people dynamically mentioned in query
-      const matchedPeople = dynamicPeople.filter((p) => lower.includes(p.toLowerCase()));
-      let personA = matchedPeople[0];
-      let personB = matchedPeople[1];
-
-      // Try regex extraction for "between X and Y" or "from X to Y"
-      if (!personA || !personB) {
-        const betweenMatch = userText.match(
-          /(?:between|from)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s+(?:and|to)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)/i
-        );
-        if (betweenMatch) {
-          personA = personA || betweenMatch[1].trim();
-          personB = personB || betweenMatch[2].trim();
-        }
-      }
-
-      payload = {
-        person_a: personA || dynamicPeople[0] || "Aarav Mehta",
-        person_b: personB || dynamicPeople[1] || "Diya Nair",
-      };
-    }
-    // 2. Decision Lineage
-    else if (
-      lower.includes("lineage") ||
-      lower.includes("why") ||
-      lower.includes("decision") ||
-      lower.includes("rfc") ||
-      lower.includes("origin") ||
-      lower.includes("history")
-    ) {
-      endpoint = "trace-decision-lineage";
-      const matchedSys = dynamicSystems.find((s) => lower.includes(s.toLowerCase()));
-      let systemName = matchedSys;
-
-      if (!systemName) {
-        const quoted = userText.match(/['"]([^'"]+)['"]/);
-        const sysWord = userText.match(/(?:for|system|of)\s+([A-Za-z0-9_-]+)/i);
-        systemName = (quoted && quoted[1]) || (sysWord && sysWord[1]) || dynamicSystems[0] || "Gatekeeper-Auth";
-      }
-
-      payload = { system_name: systemName };
-    }
-    // 3. Counterpart SME Discovery
-    else if (
-      lower.includes("expert") ||
+    // Disambiguated intent classifiers avoiding keyword shadowing
+    const isWhoQuery =
       lower.includes("who") ||
+      lower.includes("whom") ||
+      lower.includes("expert") ||
       lower.includes("sme") ||
       lower.includes("counterpart") ||
       lower.includes("specialist") ||
-      lower.includes("lead")
-    ) {
+      lower.includes("lead") ||
+      lower.includes("author") ||
+      lower.includes("point of contact");
+
+    const isSiloQuery =
+      lower.includes("silo") ||
+      lower.includes("island") ||
+      lower.includes("isolated") ||
+      lower.includes("wcc") ||
+      lower.includes("unconnected") ||
+      lower.includes("disconnected") ||
+      lower.includes("topology");
+
+    const isDecisionLineageQuery =
+      !isWhoQuery &&
+      (lower.includes("lineage") ||
+        (lower.includes("trace") && (lower.includes("decision") || lower.includes("rfc"))) ||
+        (lower.includes("decision") && (lower.includes("origin") || lower.includes("history") || lower.includes("behind") || lower.includes("for"))) ||
+        lower.includes("why does") ||
+        lower.includes("why was") ||
+        (lower.includes("rfc") && lower.includes("origin")));
+
+    const isConflictQuery =
+      lower.includes("conflict") ||
+      lower.includes("collision") ||
+      lower.includes("clash") ||
+      lower.includes("contradiction") ||
+      (lower.includes("policy") && !isWhoQuery) ||
+      lower.includes("compliance");
+
+    const isRedundantQuery =
+      lower.includes("redundant") ||
+      lower.includes("duplicate") ||
+      lower.includes("overlap") ||
+      lower.includes("stripe") ||
+      lower.includes("aadhaar") ||
+      lower.includes("kms") ||
+      lower.includes("external api") ||
+      lower.includes("shared api") ||
+      (lower.includes("connect") && (lower.includes("stripe") || lower.includes("system") || lower.includes("api") || lower.includes("service")));
+
+    const matchedPeople = dynamicPeople.filter((p) => lower.includes(p.toLowerCase()));
+    const isWarmIntroQuery =
+      !isConflictQuery &&
+      !isRedundantQuery &&
+      (lower.includes("intro") ||
+        lower.includes("warm") ||
+        lower.includes("introduce") ||
+        (lower.includes("reach") && (matchedPeople.length >= 1 || /between|from|to/i.test(userText))) ||
+        ((lower.includes("path") || lower.includes("connect")) && (matchedPeople.length >= 2 || /(?:between|from|connect)\s+[A-Z][a-z]+/i.test(userText))));
+
+    // 1. Organizational Silos (WCC)
+    if (isSiloQuery) {
+      endpoint = "detect-silos";
+      payload = {};
+    }
+    // 2. Counterpart SME Discovery (prioritized over Decision Lineage to prevent 'who authored/decided' shadowing)
+    else if (isWhoQuery) {
       endpoint = "find-counterpart-expert";
       // Dynamic company extraction supporting Unified entity after live mutations
       let company = "Vaultly";
@@ -476,32 +481,70 @@ export default function ChatPanel({
 
       let topic = dynamicDomains[0] || "Authentication";
       if (lower.includes("auth")) topic = "Authentication";
-      else if (lower.includes("retention") || lower.includes("audit")) topic = "Data Retention";
+      else if (lower.includes("retention") || lower.includes("audit") || lower.includes("log")) topic = "Data Retention";
       else if (lower.includes("ledger") || lower.includes("balance")) topic = "Ledger";
       else if (lower.includes("gateway") || lower.includes("mesh")) topic = "Gateway";
       else if (lower.includes("kyc") || lower.includes("onboard")) topic = "KYC";
       else if (lower.includes("core")) topic = "Core Services";
       else {
-        const matchedDomain = dynamicDomains.find((d) => lower.includes(d.toLowerCase()));
-        if (matchedDomain) topic = matchedDomain;
+        const matchedSys = dynamicSystems.find((s) => lower.includes(s.toLowerCase()));
+        if (matchedSys) {
+          if (matchedSys.toLowerCase().includes("gatekeeper") || matchedSys.toLowerCase().includes("pulse")) {
+            topic = "Authentication";
+          } else if (matchedSys.toLowerCase().includes("ledger") || matchedSys.toLowerCase().includes("vault-engine")) {
+            topic = "Ledger";
+          }
+        } else {
+          const matchedDomain = dynamicDomains.find((d) => lower.includes(d.toLowerCase()));
+          if (matchedDomain) topic = matchedDomain;
+        }
       }
 
       payload = { topic, company };
     }
-    // 4. Policy Conflicts
-    else if (
-      lower.includes("conflict") ||
-      lower.includes("policy") ||
-      lower.includes("retention") ||
-      lower.includes("compliance") ||
-      lower.includes("clash") ||
-      lower.includes("contradiction")
-    ) {
+    // 3. Decision Lineage (traces rationale/lineage for a system, guaranteed not a 'who' question)
+    else if (isDecisionLineageQuery) {
+      endpoint = "trace-decision-lineage";
+      const matchedSys = dynamicSystems.find((s) => lower.includes(s.toLowerCase()));
+      let systemName = matchedSys;
+
+      if (!systemName) {
+        const quoted = userText.match(/['"]([^'"]+)['"]/);
+        const sysWord = userText.match(/(?:for|system|of)\s+([A-Za-z0-9_-]+)/i);
+        systemName = (quoted && quoted[1]) || (sysWord && sysWord[1]) || dynamicSystems[0] || "Gatekeeper-Auth";
+      }
+
+      payload = { system_name: systemName };
+    }
+    // 4. Warm Intro Path (strictly scoped to people interactions; ignores generic 'connect to system' / 'conflict path')
+    else if (isWarmIntroQuery) {
+      endpoint = "warm-intro-path";
+      let personA = matchedPeople[0];
+      let personB = matchedPeople[1];
+
+      // Try regex extraction for "between X and Y", "from X to Y", or "connect X to/with Y"
+      if (!personA || !personB) {
+        const betweenMatch = userText.match(
+          /(?:between|from|connect)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s+(?:and|to|with)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)/i
+        );
+        if (betweenMatch) {
+          personA = personA || betweenMatch[1].trim();
+          personB = personB || betweenMatch[2].trim();
+        }
+      }
+
+      payload = {
+        person_a: personA || dynamicPeople[0] || "Aarav Mehta",
+        person_b: personB || dynamicPeople[1] || "Diya Nair",
+      };
+    }
+    // 5. Policy Conflicts (guaranteed not shadowed by warm intro path)
+    else if (isConflictQuery) {
       endpoint = "detect-policy-conflicts";
       let domain: string | undefined = undefined;
       if (lower.includes("auth")) domain = "Authentication";
-      else if (lower.includes("retention") || lower.includes("audit")) domain = "Data Retention";
-      else if (lower.includes("ledger")) domain = "Ledger";
+      else if (lower.includes("retention") || lower.includes("audit") || lower.includes("log")) domain = "Data Retention";
+      else if (lower.includes("ledger") || lower.includes("balance")) domain = "Ledger";
       else if (lower.includes("gateway") || lower.includes("mesh")) domain = "Gateway";
       else if (lower.includes("kyc")) domain = "KYC";
       else if (lower.includes("core")) domain = "Core Services";
@@ -512,20 +555,7 @@ export default function ChatPanel({
 
       payload = { domain };
     }
-    // 5. Organizational Silos (WCC)
-    else if (
-      lower.includes("silo") ||
-      lower.includes("island") ||
-      lower.includes("isolated") ||
-      lower.includes("wcc") ||
-      lower.includes("component") ||
-      lower.includes("unconnected") ||
-      lower.includes("topology")
-    ) {
-      endpoint = "detect-silos";
-      payload = {};
-    }
-    // 6. Redundant Systems (default)
+    // 6. Redundant Systems (handles microservice clusters, shared API dependencies, and default)
     else {
       endpoint = "find-redundant-systems";
       payload = {};
