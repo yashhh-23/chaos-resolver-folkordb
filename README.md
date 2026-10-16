@@ -41,7 +41,8 @@ chaos-resolver-folkordb/
 │   │   └── service.py              # Normalized 384-dim semantic embedding service (Local & OpenAI)
 │   ├── pipeline/
 │   │   ├── vector_index.py         # FalkorDB native vector indexing (db.idx.vector) & embedding population
-│   │   └── auto_linker.py          # Hybrid Vector + Graph Auto-Linker Engine (threshold >= 0.82)
+│   │   ├── auto_linker.py          # Hybrid Vector + Graph Auto-Linker Engine (threshold >= 0.82)
+│   │   └── mutations.py            # Live Graph Mutation Engine (Track 03 real-time knowledge currency)
 │   ├── data/
 │   │   ├── synthetic_data.py       # Realistic FinPay + Vaultly M&A dilemma dataset
 │   │   ├── builder.py              # Multigraph Cypher statement compiler & exporter
@@ -50,14 +51,20 @@ chaos-resolver-folkordb/
 │   │   ├── graph_tools.py          # 5 Deterministic agent tools returning text + visual Subgraph JSON
 │   │   └── mcp_server.py           # Model Context Protocol (MCP) tool schema & dispatcher
 │   ├── api/
-│   │   └── main.py                 # FastAPI backend server with CORS & visual subgraph endpoints
+│   │   └── main.py                 # FastAPI backend server with CORS, visual subgraph & mutation endpoints
 │   ├── cli.py                      # Interactive FalkorDB REPL, CLI tool runner, and uvicorn launcher
 │   └── utils/
 │       └── logger.py               # Standardized application logging
+├── frontend/                       # Next.js 14 App Router War-Room Dashboard
+│   ├── app/page.tsx                # Split-screen agent chat & real-time canvas
+│   ├── components/GraphCanvas.tsx  # Force-directed dynamic 2D graph with active path isolation
+│   ├── components/ChatPanel.tsx    # Agent chat, one-click judge prompts & live mutation action bar
+│   └── components/NodeInspectorModal.tsx # Node attribute inspector drawer
 └── tests/
     ├── test_schema_and_dataset.py  # Schema, edge integrity, collision guards (9 tests)
     ├── test_auto_linker.py         # Vector embeddings & auto-linker resolution (4 tests)
-    └── test_agent_tools.py         # Agent tools, MCP schema, & FastAPI endpoints (8 tests)
+    ├── test_agent_tools.py         # Agent tools, MCP schema, & FastAPI endpoints (8 tests)
+    └── test_live_mutations.py      # Live graph mutations, Cypher MERGE/SET updates (3 tests)
 
 
 ```
@@ -188,11 +195,34 @@ Features:
 - **Active Subgraph Highlighting**: Automatically isolates, zooms, and pulses the exact nodes and relationships traversed when an agent question is answered.
 - **Node Inspector Drawer**: Click any node on the canvas to inspect its full properties, architecture domain, and tenant provenance.
 
-### 8. Run Test Suite
+### 8. Phase 5: Live Graph Mutations (Track 03 Hardening)
+Satisfying Track 03's primary requirement — **"Keeping knowledge current as things change"**:
+When architects and leaders make decisions, they mutate the knowledge graph in real-time using transactional Cypher `MERGE`, `SET`, and edge relinking.
+
+You can trigger live mutations from the **War-Room UI buttons** or directly via CLI:
+```bash
+# 1. Resolve Auth Conflict (Unifies 15-min FinPay JWT & 7-day Vaultly session into 30-min biometric policy)
+python -m src.cli mutate resolve-auth
+
+# 2. Resolve Data Retention Conflict (Deprecates conflicting policies; enacts 90-day tiered audit storage)
+python -m src.cli mutate resolve-retention
+
+# 3. Merge Cross-Company Teams (Merges FinPay SecArch & Vaultly Identity Growth into unified team)
+python -m src.cli mutate merge-teams
+
+# 4. Reset Demo Graph (Cleanly restores FalkorDB multigraph to initial state)
+python -m src.cli mutate reset-demo
+```
+
+### 9. Run Test Suite
 ```bash
 pytest tests/ -v
 ```
-All **21 unit & integration tests** pass across schema rules, referential integrity, collision guards, embeddings normalization, hybrid auto-linker, the 5 agent tools, MCP schemas, and FastAPI endpoints.
+All **24 unit & integration tests** pass across:
+- Multigraph schema integrity, node collisions, and bridge relations (`test_schema_and_dataset.py`)
+- Dense 384-dim normalized vector embeddings and hybrid auto-linker (`test_auto_linker.py`)
+- Deterministic M&A agent tools, MCP schemas, and FastAPI endpoints (`test_agent_tools.py`)
+- Live graph mutations, transactional Cypher updates, and Track 03 real-time state maintenance (`test_live_mutations.py`)
 
 
 

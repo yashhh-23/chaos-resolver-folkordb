@@ -13,8 +13,12 @@ import {
   FileText,
   Activity,
   Layers,
+  Zap,
+  RotateCcw,
+  CheckCircle2,
 } from "lucide-react";
-import { SubgraphData, ToolResponse, callTool } from "@/lib/api";
+import { SubgraphData, ToolResponse, callTool, mutateGraph, fetchFullSubgraph } from "@/lib/api";
+
 
 export interface Message {
   id: string;
@@ -125,7 +129,53 @@ export default function ChatPanel({
     }
   };
 
+  const handleLiveMutation = async (action: "resolve-auth" | "resolve-retention" | "merge-teams" | "reset-demo", actionLabel: string) => {
+    if (isLoading) return;
+
+    const userMsg: Message = {
+      id: Date.now().toString(),
+      sender: "user",
+      text: `[Execute Live Mutation]: ${actionLabel}`,
+      timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+    };
+
+    setMessages((prev) => [...prev, userMsg]);
+    setIsLoading(true);
+
+    try {
+      const res = await mutateGraph(action);
+      const agentMsg: Message = {
+        id: (Date.now() + 1).toString(),
+        sender: "agent",
+        text: `### ⚡ Live Graph Mutation Executed (Track 03)\n\n` +
+              `**Action**: \`${res.action || action}\`\n\n` +
+              `**Result**: ${res.resolution_summary || res.message}\n\n` +
+              `> *FalkorDB multigraph state updated live via Cypher MERGE/SET. Knowledge is current as of ${res.timestamp || "now"}.*`,
+        toolName: "live_mutation",
+        subgraph: res.subgraph,
+        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      };
+      setMessages((prev) => [...prev, agentMsg]);
+      if (res.subgraph) {
+        onSubgraphUpdate(res.subgraph);
+      }
+    } catch (err: any) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: (Date.now() + 1).toString(),
+          sender: "agent",
+          text: `⚠️ **Mutation Error**: ${err.message || err}`,
+          timestamp: "Error",
+        },
+      ]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const handleCustomSubmit = async (e: React.FormEvent) => {
+
     e.preventDefault();
     if (!input.trim() || isLoading) return;
 
@@ -250,6 +300,51 @@ export default function ChatPanel({
               </button>
             );
           })}
+        </div>
+      </div>
+
+      {/* Live Graph Mutation Controls (Track 03 Hardening) */}
+      <div className="p-3 bg-slate-950/70 border-b border-slate-800/80">
+        <div className="flex items-center justify-between mb-2">
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-amber-400 flex items-center gap-1">
+            <Zap className="w-3.5 h-3.5 text-amber-400" />
+            Live Brain Mutations (Track 03)
+          </p>
+          <span className="text-[10px] text-slate-500 font-mono">Dynamic Cypher MERGE/SET</span>
+        </div>
+        <div className="grid grid-cols-2 gap-1.5">
+          <button
+            onClick={() => handleLiveMutation("resolve-auth", "Unify 30-min JWT with Biometric Refresh")}
+            disabled={isLoading}
+            className="flex items-center gap-1.5 text-[11px] bg-emerald-950/40 hover:bg-emerald-900/50 text-emerald-300 border border-emerald-700/60 px-2 py-1.5 rounded-md transition disabled:opacity-50 text-left"
+          >
+            <CheckCircle2 className="w-3 h-3 text-emerald-400 shrink-0" />
+            <span className="truncate">Resolve Auth Conflict</span>
+          </button>
+          <button
+            onClick={() => handleLiveMutation("resolve-retention", "Adopt 90-Day Tiered Audit Storage")}
+            disabled={isLoading}
+            className="flex items-center gap-1.5 text-[11px] bg-emerald-950/40 hover:bg-emerald-900/50 text-emerald-300 border border-emerald-700/60 px-2 py-1.5 rounded-md transition disabled:opacity-50 text-left"
+          >
+            <CheckCircle2 className="w-3 h-3 text-emerald-400 shrink-0" />
+            <span className="truncate">Resolve Retention</span>
+          </button>
+          <button
+            onClick={() => handleLiveMutation("merge-teams", "Merge SecArch and Identity Growth into Unified Org")}
+            disabled={isLoading}
+            className="flex items-center gap-1.5 text-[11px] bg-indigo-950/40 hover:bg-indigo-900/50 text-indigo-300 border border-indigo-700/60 px-2 py-1.5 rounded-md transition disabled:opacity-50 text-left"
+          >
+            <GitMerge className="w-3 h-3 text-indigo-400 shrink-0" />
+            <span className="truncate">Merge Sec & Auth</span>
+          </button>
+          <button
+            onClick={() => handleLiveMutation("reset-demo", "Restore FalkorDB multigraph to initial state")}
+            disabled={isLoading}
+            className="flex items-center gap-1.5 text-[11px] bg-slate-800/80 hover:bg-slate-700/80 text-slate-300 border border-slate-700 px-2 py-1.5 rounded-md transition disabled:opacity-50 text-left"
+          >
+            <RotateCcw className="w-3 h-3 text-amber-400 shrink-0" />
+            <span className="truncate">Reset Demo Graph</span>
+          </button>
         </div>
       </div>
 

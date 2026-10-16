@@ -62,3 +62,16 @@ export async function callTool(endpoint: string, payload?: Record<string, any>):
   if (!res.ok) throw new Error(`Tool call failed: ${res.statusText}`);
   return await res.json();
 }
+
+export async function mutateGraph(action: "resolve-auth" | "resolve-retention" | "merge-teams" | "reset-demo"): Promise<any> {
+  let endpoint = "";
+  if (action === "resolve-auth") endpoint = "/api/mutate/resolve-auth-conflict";
+  else if (action === "resolve-retention") endpoint = "/api/mutate/resolve-retention-conflict";
+  else if (action === "merge-teams") endpoint = "/api/mutate/merge-teams";
+  else if (action === "reset-demo") endpoint = "/api/mutate/reset-demo";
+
+  const res = await fetch(`${API_BASE}${endpoint}`, { method: "POST" });
+  if (!res.ok) throw new Error(`Mutation failed: ${res.statusText}`);
+  return await res.json();
+}
+

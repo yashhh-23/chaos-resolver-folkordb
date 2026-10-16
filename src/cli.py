@@ -193,6 +193,14 @@ def main():
     t_intro.add_argument("--person-a", required=True, help="Person A name")
     t_intro.add_argument("--person-b", required=True, help="Person B name")
 
+    # mutate subcommand (Phase 5 Live Brain Mutations)
+    mutate_parser = subparsers.add_parser("mutate", help="Execute live graph mutations (Track 03)")
+    mutate_sub = mutate_parser.add_subparsers(dest="mutate_action")
+    mutate_sub.add_parser("resolve-auth", help="Resolve authentication session policy conflict")
+    mutate_sub.add_parser("resolve-retention", help="Resolve data retention compliance conflict")
+    mutate_sub.add_parser("merge-teams", help="Merge FinPay SecArch and Vaultly Identity teams")
+    mutate_sub.add_parser("reset-demo", help="Reset FalkorDB multigraphs to pristine initial state")
+
     args = parser.parse_args()
 
     if args.subcommand == "query":
@@ -226,6 +234,26 @@ def main():
             console.print(Panel(res.text_answer, title="Tool: get_warm_intro_path", border_style="blue"))
         else:
             tool_parser.print_help()
+    elif args.subcommand == "mutate":
+        from src.pipeline.mutations import live_mutations
+        if args.mutate_action == "resolve-auth":
+            res = live_mutations.resolve_auth_conflict()
+            console.print(Panel(f"[green]Status: {res['status']}[/green]\n[bold]{res['resolution_summary']}[/bold]", title="Live Mutation: Resolve Auth Conflict", border_style="green"))
+        elif args.mutate_action == "resolve-retention":
+            res = live_mutations.resolve_retention_conflict()
+            console.print(Panel(f"[green]Status: {res['status']}[/green]\n[bold]{res['resolution_summary']}[/bold]", title="Live Mutation: Resolve Retention Conflict", border_style="green"))
+        elif args.mutate_action == "merge-teams":
+            res = live_mutations.merge_teams()
+            console.print(Panel(f"[green]Status: {res['status']}[/green]\n[bold]{res['resolution_summary']}[/bold]", title="Live Mutation: Merge Teams", border_style="green"))
+        elif args.mutate_action == "reset-demo":
+            from src.data.seed import seed_all_graphs
+            from src.pipeline.auto_linker import auto_linker_engine
+            console.print("[cyan]Resetting demo multigraphs in FalkorDB...[/cyan]")
+            seed_all_graphs(clear_first=True)
+            auto_linker_engine.run_pipeline(settings.graph_merged)
+            console.print("[bold green]FalkorDB multigraphs reset and auto-linked successfully.[/bold green]")
+        else:
+            mutate_parser.print_help()
     else:
         interactive_repl(getattr(args, "graph", settings.graph_merged))
 

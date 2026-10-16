@@ -178,3 +178,53 @@ def get_graph_visualization(graph: Optional[str] = None):
         )
 
     return subgraph
+
+
+# Live Mutation Endpoints (Phase 5 - Track 03: Keeping Knowledge Current)
+@app.post("/api/mutate/resolve-auth-conflict")
+def resolve_auth_conflict():
+    """Live Mutation: Resolves 15-min vs 7-day token conflict by creating Unified Adaptive Policy."""
+    from src.pipeline.mutations import live_mutations
+    try:
+        return live_mutations.resolve_auth_conflict()
+    except Exception as e:
+        logger.error(f"Error in resolve_auth_conflict: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/mutate/resolve-retention-conflict")
+def resolve_retention_conflict():
+    """Live Mutation: Resolves 30-day vs 180-day retention conflict via tiered storage standard."""
+    from src.pipeline.mutations import live_mutations
+    try:
+        return live_mutations.resolve_retention_conflict()
+    except Exception as e:
+        logger.error(f"Error in resolve_retention_conflict: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/mutate/merge-teams")
+def merge_teams():
+    """Live Mutation: Merges SecArch and Identity Growth into Unified Engineering Org."""
+    from src.pipeline.mutations import live_mutations
+    try:
+        return live_mutations.merge_teams()
+    except Exception as e:
+        logger.error(f"Error in merge_teams: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/mutate/reset-demo")
+def reset_demo_graph():
+    """Resets FalkorDB multigraphs to pristine initial Phase 1/2 state."""
+    from src.data.seed import seed_all_graphs
+    from src.pipeline.auto_linker import auto_linker_engine
+    try:
+        logger.info("Resetting demo multigraphs in FalkorDB...")
+        seed_all_graphs(clear_first=True)
+        auto_linker_engine.run_pipeline(settings.graph_merged)
+        return {"status": "success", "message": "FalkorDB multigraphs reset and auto-linked successfully."}
+    except Exception as e:
+        logger.error(f"Error in reset_demo_graph: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
