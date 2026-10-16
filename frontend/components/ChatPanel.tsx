@@ -44,14 +44,13 @@ const KNOWN_SYSTEMS = [
 const KNOWN_PEOPLE = [
   "Aarav Mehta",
   "Diya Nair",
-  "Rohan Sharma",
-  "Priya Patel",
-  "Vikram Malhotra",
-  "Ananya Iyer",
-  "Kavita Rao",
-  "Sameer Sen",
+  "Rohan Gupta",
+  "Priya Sharma",
   "Neha Verma",
-  "Arjun Deshmukh",
+  "Arjun Das",
+  "Kabir Patel",
+  "Tanya Sen",
+  "Rahul Sharma",
 ];
 
 const KNOWN_DOMAINS = [
