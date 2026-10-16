@@ -13,7 +13,14 @@ from src.config import settings
 from src.utils.logger import logger
 from src.db.client import db_client
 from src.embeddings.service import embedding_service
-from src.pipeline.vector_index import ensure_vector_indexes, populate_node_embeddings
+from src.pipeline.vector_index import (
+    ensure_vector_indexes,
+    populate_node_embeddings,
+    query_vector_neighbors,
+    system_embedding_text,
+    policy_embedding_text,
+    decision_embedding_text,
+)
 
 
 class AutoLinkerEngine:
@@ -41,29 +48,63 @@ class AutoLinkerEngine:
             RETURN s.id, s.name, s.domain, s.description, s.tech, collect(ext.name) as ext_apis
         """
         vl_res = graph.query(vl_query)
+        vl_systems = {
+            row[0]: {
+                "name": row[1],
+                "domain": row[2] or "",
+                "desc": row[3] or "",
+                "tech": row[4] or "",
+                "apis": set(row[5] or []),
+            }
+            for row in vl_res.result_set
+        }
 
         redundancies = []
 
         for fp_row in fp_res.result_set:
             fp_id, fp_name, fp_domain, fp_desc, fp_tech, fp_apis = fp_row
-            fp_text = f"System: {fp_name} | Domain: {fp_domain} | Tech: {fp_tech} | Description: {fp_desc}"
-            fp_vec = embedding_service.embed_text(fp_text)
             fp_apis_set = set(fp_apis or [])
+            fp_vec = embedding_service.embed_text(
+                system_embedding_text(fp_name, fp_domain, fp_tech, fp_desc)
+            )
 
-            for vl_row in vl_res.result_set:
-                vl_id, vl_name, vl_domain, vl_desc, vl_tech, vl_apis = vl_row
-                vl_text = f"System: {vl_name} | Domain: {vl_domain} | Tech: {vl_tech} | Description: {vl_desc}"
-                vl_vec = embedding_service.embed_text(vl_text)
-                vl_apis_set = set(vl_apis or [])
+            # Query FalkorDB vector space for top neighbor candidates
+            try:
+                neighbors = query_vector_neighbors(graph_name, "System", fp_vec, k=10)
+            except Exception as e:
+                logger.warning(f"Native vector search failed, falling back to pairwise check: {e}")
+                neighbors = []
 
-                # 1. Vector cosine similarity
-                cos_sim = embedding_service.cosine_similarity(fp_vec, vl_vec)
+            if neighbors:
+                candidates = []
+                for node, distance in neighbors:
+                    props = node.properties if hasattr(node, "properties") else {}
+                    if props.get("company_origin") == "Vaultly":
+                        vl_id = props.get("id")
+                        cos_sim = round(max(0.0, 1.0 - float(distance)), 2)
+                        candidates.append((vl_id, cos_sim))
+            else:
+                candidates = []
+                for vl_id, vl_info in vl_systems.items():
+                    vl_vec = embedding_service.embed_text(
+                        system_embedding_text(vl_info["name"], vl_info["domain"], vl_info["tech"], vl_info["desc"])
+                    )
+                    cos_sim = embedding_service.cosine_similarity(fp_vec, vl_vec)
+                    candidates.append((vl_id, cos_sim))
 
-                # 2. Graph topological signal: shared external API dependencies
+            for vl_id, cos_sim in candidates:
+                vl_info = vl_systems.get(vl_id)
+                if not vl_info:
+                    continue
+                vl_name = vl_info["name"]
+                vl_domain = vl_info["domain"]
+                vl_apis_set = vl_info["apis"]
+
+                # Topological signal: shared external API dependencies
                 common_apis = fp_apis_set.intersection(vl_apis_set)
                 graph_bonus = 0.12 * len(common_apis)
 
-                # 3. Domain alignment boost
+                # Domain alignment boost
                 domain_bonus = 0.05 if fp_domain.lower() == vl_domain.lower() else 0.0
 
                 combined_score = min(0.99, round(cos_sim + graph_bonus + domain_bonus, 2))
@@ -108,18 +149,44 @@ class AutoLinkerEngine:
 
         fp_policies = graph.query("MATCH (p:Policy {company_origin: 'FinPay'}) RETURN p.id, p.name, p.domain, p.description, p.source").result_set
         vl_policies = graph.query("MATCH (p:Policy {company_origin: 'Vaultly'}) RETURN p.id, p.name, p.domain, p.description, p.source").result_set
+        vl_map = {row[0]: {"name": row[1], "domain": row[2] or "", "desc": row[3] or "", "source": row[4]} for row in vl_policies}
 
         conflicts = []
 
         for fp_row in fp_policies:
             fp_id, fp_name, fp_domain, fp_desc, fp_src = fp_row
-            fp_vec = embedding_service.embed_text(f"{fp_name} | {fp_domain} | {fp_desc}")
+            fp_vec = embedding_service.embed_text(policy_embedding_text(fp_name, fp_domain, fp_desc))
 
-            for vl_row in vl_policies:
-                vl_id, vl_name, vl_domain, vl_desc, vl_src = vl_row
-                vl_vec = embedding_service.embed_text(f"{vl_name} | {vl_domain} | {vl_desc}")
+            try:
+                neighbors = query_vector_neighbors(graph_name, "Policy", fp_vec, k=10)
+            except Exception as e:
+                logger.warning(f"Native vector search failed, falling back to pairwise check: {e}")
+                neighbors = []
 
-                sim = embedding_service.cosine_similarity(fp_vec, vl_vec)
+            if neighbors:
+                candidates = []
+                for node, distance in neighbors:
+                    props = node.properties if hasattr(node, "properties") else {}
+                    if props.get("company_origin") == "Vaultly":
+                        vl_id = props.get("id")
+                        sim = round(max(0.0, 1.0 - float(distance)), 2)
+                        candidates.append((vl_id, sim))
+            else:
+                candidates = []
+                for vl_id, vl_info in vl_map.items():
+                    vl_vec = embedding_service.embed_text(
+                        policy_embedding_text(vl_info["name"], vl_info["domain"], vl_info["desc"])
+                    )
+                    sim = embedding_service.cosine_similarity(fp_vec, vl_vec)
+                    candidates.append((vl_id, sim))
+
+            for vl_id, sim in candidates:
+                vl_info = vl_map.get(vl_id)
+                if not vl_info:
+                    continue
+                vl_name = vl_info["name"]
+                vl_domain = vl_info["domain"]
+
                 is_same_domain = fp_domain.lower() == vl_domain.lower()
 
                 if is_same_domain or sim >= self.threshold:
@@ -156,18 +223,42 @@ class AutoLinkerEngine:
 
         fp_decisions = graph.query("MATCH (d:Decision {company_origin: 'FinPay'}) RETURN d.id, d.summary, d.authority_level, d.source").result_set
         vl_decisions = graph.query("MATCH (d:Decision {company_origin: 'Vaultly'}) RETURN d.id, d.summary, d.authority_level, d.source").result_set
+        vl_map = {row[0]: {"summary": row[1] or "", "auth": row[2] or "", "source": row[3] or ""} for row in vl_decisions}
 
         conflicts = []
 
         for fp_row in fp_decisions:
             fp_id, fp_summary, fp_auth, fp_src = fp_row
-            fp_vec = embedding_service.embed_text(fp_summary)
+            fp_vec = embedding_service.embed_text(decision_embedding_text(fp_summary, fp_auth, fp_src))
 
-            for vl_row in vl_decisions:
-                vl_id, vl_summary, vl_auth, vl_src = vl_row
-                vl_vec = embedding_service.embed_text(vl_summary)
+            try:
+                neighbors = query_vector_neighbors(graph_name, "Decision", fp_vec, k=10)
+            except Exception as e:
+                logger.warning(f"Native vector search failed, falling back to pairwise check: {e}")
+                neighbors = []
 
-                sim = embedding_service.cosine_similarity(fp_vec, vl_vec)
+            if neighbors:
+                candidates = []
+                for node, distance in neighbors:
+                    props = node.properties if hasattr(node, "properties") else {}
+                    if props.get("company_origin") == "Vaultly":
+                        vl_id = props.get("id")
+                        sim = round(max(0.0, 1.0 - float(distance)), 2)
+                        candidates.append((vl_id, sim))
+            else:
+                candidates = []
+                for vl_id, vl_info in vl_map.items():
+                    vl_vec = embedding_service.embed_text(
+                        decision_embedding_text(vl_info["summary"], vl_info["auth"], vl_info["source"])
+                    )
+                    sim = embedding_service.cosine_similarity(fp_vec, vl_vec)
+                    candidates.append((vl_id, sim))
+
+            for vl_id, sim in candidates:
+                vl_info = vl_map.get(vl_id)
+                if not vl_info:
+                    continue
+                vl_summary = vl_info["summary"]
 
                 # Domain keyword overlap check
                 fp_lower = fp_summary.lower()

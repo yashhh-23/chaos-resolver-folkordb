@@ -643,19 +643,21 @@ def get_shared_external_dependencies() -> Dict[str, Any]:
 def get_ma_bridge_relationships() -> List[Relationship]:
     """Returns cross-company bridge edges for the unified 'merged_brain' graph.
 
-    Explicitly models:
+    Explicitly models canonical M&A links aligned with the AutoLinker engine:
     - [:REDUNDANT_WITH] for overlapping microservices
     - [:CONFLICTS_WITH] for contradicting decisions & policies
     """
     return [
-        # Redundant Systems
+        # Redundant Systems (Hybrid Vector + Graph Resolution)
         Relationship(
             source_id="finpay:sys:gatekeeper_auth",
             target_id="vaultly:sys:pulse_identity",
             rel_type="REDUNDANT_WITH",
             properties={
-                "similarity": 0.93,
-                "reason": "Both handle OAuth2, session token issuance, and user credential validation",
+                "similarity": 0.99,
+                "reason": "Semantic similarity: 0.87 (domain: Authentication) | shared external API calls: ['AWS_KMS']",
+                "auto_detected": True,
+                "method": "hybrid_vector_graph",
             },
         ),
         Relationship(
@@ -663,8 +665,10 @@ def get_ma_bridge_relationships() -> List[Relationship]:
             target_id="vaultly:sys:vault_engine",
             rel_type="REDUNDANT_WITH",
             properties={
-                "similarity": 0.88,
-                "reason": "Both are double-entry settlement engines interfacing with Stripe payment rails",
+                "similarity": 0.99,
+                "reason": "Semantic similarity: 0.87 (domain: Ledger) | shared external API calls: ['Stripe_Gateway']",
+                "auto_detected": True,
+                "method": "hybrid_vector_graph",
             },
         ),
         Relationship(
@@ -672,8 +676,32 @@ def get_ma_bridge_relationships() -> List[Relationship]:
             target_id="vaultly:sys:user_onboarding",
             rel_type="REDUNDANT_WITH",
             properties={
-                "similarity": 0.95,
-                "reason": "Both perform customer onboarding verification via UIDAI Aadhaar external API",
+                "similarity": 0.99,
+                "reason": "Semantic similarity: 0.87 (domain: KYC) | shared external API calls: ['UIDAI_Aadhaar']",
+                "auto_detected": True,
+                "method": "hybrid_vector_graph",
+            },
+        ),
+        Relationship(
+            source_id="finpay:sys:finpay_mesh_gateway",
+            target_id="vaultly:sys:vaultly_public_api",
+            rel_type="REDUNDANT_WITH",
+            properties={
+                "similarity": 0.82,
+                "reason": "Semantic similarity: 0.82 (domain: Core Services)",
+                "auto_detected": True,
+                "method": "hybrid_vector_graph",
+            },
+        ),
+        Relationship(
+            source_id="finpay:sys:core_api",
+            target_id="vaultly:sys:core_api",
+            rel_type="REDUNDANT_WITH",
+            properties={
+                "similarity": 0.87,
+                "reason": "Semantic similarity: 0.82 (domain: Core Services) | domain alignment boost",
+                "auto_detected": True,
+                "method": "hybrid_vector_graph",
             },
         ),
         # Conflicting Decisions
@@ -684,7 +712,8 @@ def get_ma_bridge_relationships() -> List[Relationship]:
             properties={
                 "severity": "CRITICAL",
                 "domain": "Session Security",
-                "reason": "FinPay mandates 15-minute JWT expiration vs Vaultly's 7-day persistent mobile session tokens",
+                "reason": "FinPay mandates 15-min JWT expiry vs Vaultly 7-day persistent session tokens",
+                "auto_detected": True,
             },
         ),
         Relationship(
@@ -694,7 +723,8 @@ def get_ma_bridge_relationships() -> List[Relationship]:
             properties={
                 "severity": "HIGH",
                 "domain": "Data Retention",
-                "reason": "FinPay enforces 30-day log purge while Vaultly partner contract mandates 180-day forensic audit retention",
+                "reason": "FinPay mandates 30-day log purge vs Vaultly 180-day forensic audit retention",
+                "auto_detected": True,
             },
         ),
         Relationship(
@@ -705,6 +735,7 @@ def get_ma_bridge_relationships() -> List[Relationship]:
                 "severity": "MEDIUM",
                 "domain": "Network Security",
                 "reason": "Zero-trust SPIFFE mTLS mesh vs static API Bearer token architecture",
+                "auto_detected": True,
             },
         ),
         # Conflicting Policies
@@ -715,7 +746,8 @@ def get_ma_bridge_relationships() -> List[Relationship]:
             properties={
                 "severity": "CRITICAL",
                 "domain": "Authentication",
-                "reason": "Direct policy contradiction between PCI-DSS strict token revocation and frictionless 7-day mobile UX",
+                "reason": "Domain mismatch in Authentication: 'FinPay Session Security Policy' vs 'Vaultly Frictionless Session Policy' (semantic overlap: 0.87)",
+                "auto_detected": True,
             },
         ),
         Relationship(
@@ -725,7 +757,8 @@ def get_ma_bridge_relationships() -> List[Relationship]:
             properties={
                 "severity": "HIGH",
                 "domain": "Data Retention",
-                "reason": "Data minimization policy conflicts with banking audit trail retention requirement",
+                "reason": "Domain mismatch in Data Retention: 'FinPay Data Minimization & Log Retention' vs 'Vaultly Forensic Audit Retention Policy' (semantic overlap: 0.87)",
+                "auto_detected": True,
             },
         ),
     ]

@@ -4,7 +4,7 @@ from typing import Optional, List, Dict, Any
 import falkordb
 from src.config import settings
 from src.utils.logger import logger
-from src.schema.cypher_schema import INDEX_QUERIES, sanitize_cypher_query
+from src.schema.cypher_schema import sanitize_cypher_query
 
 
 class FalkorDBClient:
@@ -83,19 +83,6 @@ class FalkorDBClient:
         db = self.connect()
         return db.select_graph(graph_name)
 
-    def apply_schema_indexes(self, graph_name: str) -> List[str]:
-        """Applies schema index queries to optimize lookups and enforce uniqueness."""
-        graph = self.get_graph(graph_name)
-        results = []
-        for query in INDEX_QUERIES:
-            try:
-                graph.query(query)
-                results.append(f"SUCCESS: {query}")
-                logger.debug(f"[{graph_name}] Index created: {query}")
-            except Exception as e:
-                # If index already exists, FalkorDB may raise an error, which is safe to ignore
-                results.append(f"INFO: {query} ({e})")
-        return results
 
     def query(self, graph_name: str, query: str, params: Optional[Dict[str, Any]] = None, sanitize: bool = True):
         """Executes a Cypher query with optional query sanitization."""

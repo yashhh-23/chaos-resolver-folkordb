@@ -34,6 +34,21 @@ def ensure_vector_indexes(graph_name: str) -> List[str]:
     return results
 
 
+def system_embedding_text(name: str, domain: str, tech: str, description: str) -> str:
+    """Generates canonical text representation for System embedding."""
+    return f"System: {name} | Domain: {domain} | Tech: {tech} | Description: {description}"
+
+
+def policy_embedding_text(name: str, domain: str, description: str) -> str:
+    """Generates canonical text representation for Policy embedding."""
+    return f"Policy: {name} | Domain: {domain} | Description: {description}"
+
+
+def decision_embedding_text(summary: str, authority: str = "", source: str = "") -> str:
+    """Generates canonical text representation for Decision embedding."""
+    return f"Decision: {summary} | Authority: {authority} | Source: {source}"
+
+
 def populate_node_embeddings(graph_name: str) -> Dict[str, int]:
     """Computes and updates dense vector embeddings on all System, Policy, and Decision nodes."""
     graph = db_client.get_graph(graph_name)
@@ -43,7 +58,7 @@ def populate_node_embeddings(graph_name: str) -> Dict[str, int]:
     sys_res = graph.query("MATCH (s:System) RETURN s.id, s.name, s.domain, s.description, s.tech")
     for row in sys_res.result_set:
         sys_id, name, domain, desc, tech = row[0], row[1], row[2], row[3], row[4]
-        text_repr = f"System: {name} | Domain: {domain} | Tech: {tech} | Description: {desc}"
+        text_repr = system_embedding_text(name, domain, tech, desc)
         vec = embedding_service.embed_text(text_repr)
         graph.query(
             "MATCH (s:System {id: $id}) SET s.embedding = vecf32($vec)",
@@ -55,7 +70,7 @@ def populate_node_embeddings(graph_name: str) -> Dict[str, int]:
     pol_res = graph.query("MATCH (p:Policy) RETURN p.id, p.name, p.domain, p.description")
     for row in pol_res.result_set:
         pol_id, name, domain, desc = row[0], row[1], row[2], row[3]
-        text_repr = f"Policy: {name} | Domain: {domain} | Description: {desc}"
+        text_repr = policy_embedding_text(name, domain, desc)
         vec = embedding_service.embed_text(text_repr)
         graph.query(
             "MATCH (p:Policy {id: $id}) SET p.embedding = vecf32($vec)",
@@ -67,7 +82,7 @@ def populate_node_embeddings(graph_name: str) -> Dict[str, int]:
     dec_res = graph.query("MATCH (d:Decision) RETURN d.id, d.summary, d.authority_level, d.source")
     for row in dec_res.result_set:
         dec_id, summary, auth, source = row[0], row[1], row[2], row[3]
-        text_repr = f"Decision: {summary} | Authority: {auth} | Source: {source}"
+        text_repr = decision_embedding_text(summary, auth, source)
         vec = embedding_service.embed_text(text_repr)
         graph.query(
             "MATCH (d:Decision {id: $id}) SET d.embedding = vecf32($vec)",
