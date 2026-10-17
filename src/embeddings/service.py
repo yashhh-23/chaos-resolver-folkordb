@@ -13,29 +13,40 @@ class EmbeddingService:
     def __init__(self, dimension: int = 384):
         self.dimension = dimension
         self.openai_client = None
+        self.provider = "local_hash_anchor"
+        self.model_name = "deterministic-hash-anchor-v1"
+        self.model_version = f"local:deterministic-anchor:dim={dimension}:v1"
+        self.is_trained_model = False
 
         if settings.openai_api_key:
             try:
                 import openai
                 self.openai_client = openai.OpenAI(api_key=settings.openai_api_key)
-                logger.info("EmbeddingService: OpenAI client initialized.")
+                self.provider = "openai"
+                self.model_name = "text-embedding-3-small"
+                self.model_version = f"openai:text-embedding-3-small:dim={dimension}"
+                self.is_trained_model = True
+                logger.info(f"EmbeddingService: OpenAI client initialized with model '{self.model_name}' (dim={self.dimension}).")
             except Exception as e:
-                logger.warning(f"EmbeddingService: Could not initialize OpenAI client ({e}), using local engine.")
+                logger.warning(f"EmbeddingService: Could not initialize OpenAI client ({e}), using local deterministic engine.")
 
     def embed_text(self, text: str) -> List[float]:
-        """Embeds a single string into a normalized float vector."""
+        """Embeds a single string into a normalized float vector.
+
+        When OpenAI is configured, uses text-embedding-3-small with native Matryoshka
+        dimensionality reduction (dimensions=self.dimension).
+        When offline or OpenAI is unconfigured, uses the local deterministic semantic anchor
+        baseline engine, clearly labeled as a non-trained deterministic fallback.
+        """
         if self.openai_client:
             try:
+                # Use OpenAI's native Matryoshka Representation Learning (MRL) dimension parameter
                 res = self.openai_client.embeddings.create(
                     input=text,
-                    model="text-embedding-3-small",
+                    model=self.model_name,
+                    dimensions=self.dimension,
                 )
-                raw_vec = res.data[0].embedding
-                # If dimension mismatch, truncate or project
-                if len(raw_vec) >= self.dimension:
-                    vec = raw_vec[:self.dimension]
-                else:
-                    vec = raw_vec + [0.0] * (self.dimension - len(raw_vec))
+                vec = res.data[0].embedding
                 return self._normalize(vec)
             except Exception as e:
                 logger.warning(f"OpenAI embedding call failed: {e}. Falling back to local semantic embedder.")
@@ -43,11 +54,11 @@ class EmbeddingService:
         return self._local_semantic_embed(text)
 
     def _local_semantic_embed(self, text: str) -> List[float]:
-        """Fast, robust, deterministic semantic embedding generator for local operation.
+        """Fast, robust, deterministic semantic embedding baseline for offline/local operation.
 
-        Uses hash-based n-gram feature hashing combined with semantic anchor projection
-        to generate normalized dense vectors where semantically overlapping texts
-        have high cosine similarity.
+        NOTE: This is a deterministic heuristic baseline utilizing SHA256/MD5 n-gram hashing
+        and domain anchor projection for zero-dependency operation. It should NOT be presented
+        as equivalent to a trained deep neural embedding model (e.g. text-embedding-3-small).
         """
         cleaned = text.lower().strip()
         tokens = [t.strip(".,;:?!'\"()[]{}") for t in cleaned.split()]
