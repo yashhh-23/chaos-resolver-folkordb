@@ -52,7 +52,8 @@ _allowed_origins = [o.strip() for o in settings.cors_allowed_origins.split(",") 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_allowed_origins,
-    allow_origin_regex=r"^https://.*\.vercel\.app$",
+    # Restrict preview deployments strictly to this project's Vercel deployment naming pattern
+    allow_origin_regex=r"^https://(?:falkordb-powered-resolver|frontend-[a-zA-Z0-9]+)-[a-zA-Z0-9_-]*\.vercel\.app$",
     allow_credentials=True,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],

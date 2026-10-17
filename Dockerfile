@@ -6,9 +6,10 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application source code and tests
+# Copy application source code, tests, documentation, and config templates
 COPY src/ ./src/
 COPY tests/ ./tests/
+COPY README.md DEMO_GUIDE.md .env.example ./
 
 EXPOSE 8000
 

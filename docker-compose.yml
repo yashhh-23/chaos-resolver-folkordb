@@ -3,12 +3,13 @@ services:
     image: falkordb/falkordb:latest
     container_name: falkordb-m-and-a
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - falkordb-data:/data
     restart: unless-stopped
+    command: ["falkordb-server", "--requirepass", "${FALKORDB_PASSWORD:-changeme_in_production}"]
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${FALKORDB_PASSWORD:-changeme_in_production}", "ping"]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -23,7 +24,7 @@ services:
     environment:
       - FALKORDB_HOST=falkordb
       - FALKORDB_PORT=6379
-      - FALKORDB_PASSWORD=
+      - FALKORDB_PASSWORD=${FALKORDB_PASSWORD:-changeme_in_production}
       - FALKORDB_SSL=false
       - GROQ_API_KEY=${GROQ_API_KEY:-}
       - GRAPH_FINPAY=finpay_graph

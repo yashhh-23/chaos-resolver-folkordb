@@ -13,8 +13,12 @@ VECTOR_INDEX_COMMANDS = [
 ]
 
 
-def ensure_vector_indexes(graph_name: str) -> List[str]:
-    """Ensures vector indexes are created on System, Policy, and Decision nodes."""
+def ensure_vector_indexes(graph_name: str, fail_on_error: bool = False) -> List[str]:
+    """Ensures vector indexes are created on System, Policy, Decision, and Team nodes.
+    
+    If fail_on_error is True, raises a RuntimeError if any index creation encounters
+    an unexpected error (ignoring safe 'already exists' states).
+    """
     graph = db_client.get_graph(graph_name)
     results = []
 
@@ -28,8 +32,10 @@ def ensure_vector_indexes(graph_name: str) -> List[str]:
             if "already exists" in err or "equivalent" in err:
                 results.append(f"EXISTS: {cmd[:45]}")
             else:
-                logger.warning(f"[{graph_name}] Vector index warning: {e}")
-                results.append(f"WARN: {e}")
+                logger.error(f"[{graph_name}] Vector index creation error: {e}")
+                results.append(f"ERROR: {e}")
+                if fail_on_error:
+                    raise RuntimeError(f"Failed to create vector index on {graph_name}: {e}") from e
 
     return results
 

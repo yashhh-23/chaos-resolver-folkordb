@@ -557,7 +557,8 @@ export default function ChatPanel({
 
   const handleLiveMutation = async (
     action: "resolve-auth" | "resolve-retention" | "merge-teams" | "reset-demo",
-    promptText: string
+    promptText: string,
+    payload?: Record<string, any>
   ) => {
     if (isLoading) return;
 
@@ -572,7 +573,23 @@ export default function ChatPanel({
     setIsLoading(true);
 
     try {
-      const res = await mutateGraph(action, selectedGraph);
+      // Build sensible domain defaults if not supplied
+      let mutationPayload = payload;
+      if (!mutationPayload) {
+        if (action === "resolve-auth") {
+          mutationPayload = { compromise_ttl_minutes: 30, confirm_compliance_override: false };
+        } else if (action === "resolve-retention") {
+          mutationPayload = { retention_days: 90, confirm_compliance_override: false };
+        } else if (action === "merge-teams") {
+          mutationPayload = {
+            team_a_id: "finpay:team:secarch",
+            team_b_id: "vaultly:team:identity_growth",
+            unified_name: "Unified M&A Security & Identity Team",
+          };
+        }
+      }
+
+      const res = await mutateGraph(action, selectedGraph, mutationPayload);
       onBackendHealthy?.();
 
       const actionTitleMap: Record<string, string> = {
