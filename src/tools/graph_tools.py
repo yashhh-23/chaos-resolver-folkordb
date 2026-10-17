@@ -531,14 +531,14 @@ class GraphAgentTools:
         subgraph = Subgraph()
 
         res = None
-        # 1. Attempt FalkorDB native shortestPath (for directed traversals supported by engine)
+        # 1. Attempt FalkorDB native shortestPath (for undirected traversals supported by engine)
         try:
             native_q = f"""
                 MATCH (a:Person), (b:Person)
                 WHERE (toLower(a.name) CONTAINS toLower($p_a) OR toLower(a.id) CONTAINS toLower($p_a))
                   AND (toLower(b.name) CONTAINS toLower($p_b) OR toLower(b.id) CONTAINS toLower($p_b))
                 WITH a, b LIMIT 1
-                WITH shortestPath((a)-[*..{settings.warm_intro_max_directed_hops}]->(b)) as p
+                WITH shortestPath((a)-[*..{settings.warm_intro_max_directed_hops}]-(b)) as p
                 WHERE p IS NOT NULL
                 WITH p, nodes(p) as nds, relationships(p) as rls, length(p) as h
                 RETURN [n in nds | n.id] as node_ids,

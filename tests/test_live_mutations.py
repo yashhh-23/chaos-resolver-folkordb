@@ -12,6 +12,13 @@ def mutation_engine():
     return LiveMutationEngine(graph_name=settings.graph_merged)
 
 
+@pytest.fixture(scope="module", autouse=True)
+def teardown_demo_reset(mutation_engine):
+    """Ensures that after all tests in this module run, FalkorDB is cleanly restored to baseline."""
+    yield
+    mutation_engine.reset_demo(include_subgraph=False)
+
+
 def test_resolve_auth_conflict(mutation_engine):
     """Verifies that resolving auth token conflict executes MERGE/SET and returns valid subgraph."""
     res = mutation_engine.resolve_auth_conflict(compromise_ttl_minutes=30)
