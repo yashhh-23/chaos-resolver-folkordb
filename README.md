@@ -124,8 +124,14 @@ chaos-resolver-folkordb/
 3. **Policy Contradictions & Temporal Precedence:**
    - Evaluates `effective_date`, `authority_level`, and `status`. E.g., FinPay's 15-minute JWT expiration (`finpay:dec:jwt_15m`) directly conflicts with Vaultly's 7-day persistent mobile session tokens (`vaultly:dec:session_7d`).
 4. **LLM Cypher Hallucination & Infinite Traversal Safeguard:**
-   - Parameterized queries with a `sanitize_cypher_query` guard that automatically rewrites unbounded variable paths `[*]` to `[*1..4]` and guarantees a `LIMIT 25` clause.
-5. **Memory & Rate Limit Protection:**
+   - Parameterized queries with a `sanitize_cypher_query` guard and `validate_readonly_cypher` that automatically rewrites unbounded variable paths `[*]` to `[*1..4]`, enforces read-only query clauses, and guarantees a `LIMIT 25` clause.
+5. **Three-Layer Domain Guardrails (Out-of-Scope Protection):**
+   - Strictly confines the conversational agent to the M&A enterprise graph domain (FalkorDB people, teams, systems, policies, decisions).
+   - **Layer 1 (Pre-flight keyword gate)**: Zero-cost classification blocks off-topic queries (e.g. general code assistance like Java/Python, recipes, weather, general trivia) immediately with a canonical domain guidance response without incurring LLM inference costs or hallucination risks.
+   - **Layer 2 (Hardened System Prompt)**: Explicit mandatory domain boundary instructions telling the LLM to refuse off-topic questions.
+   - **Layer 3 (Post-flight Intercept)**: Validates direct ungrounded text answers to prevent jailbreaks or ungrounded responses.
+   - **Fallback Gate**: Even when operating in offline deterministic mode, the scope check guarantees general out-of-scope prompts are safely rejected.
+6. **Memory & Rate Limit Protection:**
    - Node payloads store concise 2–3 sentence excerpts instead of bloating graph memory with raw unstructured documents.
 
 ---
@@ -293,8 +299,8 @@ Run the full pytest suite locally:
 ```bash
 pytest tests/ -v
 ```
-All **28 unit & integration tests** pass across:
-- **Multigraph schema integrity, node collisions, and bridge relations** (`test_schema_and_dataset.py` - 9 tests)
-- **Dense 384-dim normalized vector embeddings, hybrid auto-linker, and threshold filtering** (`test_auto_linker.py` - 5 tests)
-- **Deterministic M&A agent tools, WCC, MCP schemas, /api/chat & FastAPI endpoints** (`test_agent_tools.py` - 10 tests)
-- **Live graph mutations, transactional Cypher updates, and Track 03 real-time state maintenance** (`test_live_mutations.py` - 4 tests)
+All **55 unit & integration tests** pass across:
+- **Multigraph schema integrity, node collisions, Cypher sanitization, read-only boundaries, and bridge relations** (`test_schema_and_dataset.py` - 14 tests)
+- **Dense 384-dim normalized vector embeddings, native FalkorDB search, hybrid auto-linker, and stale bridge reconciliation** (`test_auto_linker.py` - 9 tests)
+- **Deterministic M&A agent tools, WCC silo detection, warm intro path semantics, MCP schemas, visualization subgraphs, /api/chat & FastAPI endpoints** (`test_agent_tools.py` - 21 tests)
+- **Live graph mutations, transactional Cypher updates, compliance validation, and multi-tenant baseline restoration** (`test_live_mutations.py` - 11 tests)
