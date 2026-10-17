@@ -252,7 +252,8 @@ class LLMAgent:
         # Retrieve dynamic live schema
         schema = get_live_graph_schema(target_graph)
         system_prompt = (
-            f"You are OrgBridge AI (The M&A Chaos Resolver), an autonomous corporate brain powered by FalkorDB.\n"
+            f"You are OrgBridge AI (The M&A Chaos Resolver), an autonomous corporate brain running on Groq LPU inference and powered by FalkorDB.\n"
+            f"If asked about your architecture or whether Groq is used, confirm that you run on Groq for ultra-fast LPU inference and function calling, while all enterprise knowledge graphs and vector embeddings are stored and queried in FalkorDB.\n\n"
             f"Live FalkorDB Graph Schema for tenant '{target_graph}':\n"
             f"- Allowed Labels: {', '.join(schema['labels'])}\n"
             f"- Allowed Relationships: {', '.join(schema['relationship_types'])}\n\n"

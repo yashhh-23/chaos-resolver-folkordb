@@ -36,6 +36,22 @@ export interface ToolResponse {
   subgraph: SubgraphData;
 }
 
+async function fetchWithRetry(url: string, options: RequestInit, retries = 2, delayMs = 1000): Promise<Response> {
+  let lastError: any;
+  for (let i = 0; i <= retries; i++) {
+    try {
+      const res = await fetch(url, options);
+      return res;
+    } catch (err) {
+      lastError = err;
+      if (i < retries) {
+        await new Promise((r) => setTimeout(r, delayMs * (i + 1)));
+      }
+    }
+  }
+  throw lastError || new Error("Network request failed after retries");
+}
+
 export async function checkBackendHealth() {
   try {
     const res = await fetch(`${API_BASE}/api/health`, { cache: "no-store" });
@@ -48,13 +64,13 @@ export async function checkBackendHealth() {
 
 export async function fetchFullSubgraph(graphName?: string): Promise<SubgraphData> {
   const url = graphName ? `${API_BASE}/api/graph/subgraph?graph=${graphName}` : `${API_BASE}/api/graph/subgraph`;
-  const res = await fetch(url, { cache: "no-store" });
+  const res = await fetchWithRetry(url, { cache: "no-store" });
   if (!res.ok) throw new Error(`Failed to load graph: ${res.statusText}`);
   return await res.json();
 }
 
 export async function callTool(endpoint: string, payload?: Record<string, any>): Promise<ToolResponse> {
-  const res = await fetch(`${API_BASE}/api/tools/${endpoint}`, {
+  const res = await fetchWithRetry(`${API_BASE}/api/tools/${endpoint}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: payload ? JSON.stringify(payload) : undefined,
@@ -73,7 +89,7 @@ export async function mutateGraph(
   else if (action === "merge-teams") endpoint = "/api/mutate/merge-teams";
   else if (action === "reset-demo") endpoint = "/api/mutate/reset-demo";
 
-  const res = await fetch(`${API_BASE}${endpoint}`, {
+  const res = await fetchWithRetry(`${API_BASE}${endpoint}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: payload ? JSON.stringify(payload) : undefined,
@@ -83,7 +99,7 @@ export async function mutateGraph(
 }
 
 export async function chatWithAgent(prompt: string, graph?: string): Promise<ToolResponse> {
-  const res = await fetch(`${API_BASE}/api/chat`, {
+  const res = await fetchWithRetry(`${API_BASE}/api/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ prompt, graph }),
