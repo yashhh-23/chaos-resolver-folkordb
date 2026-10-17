@@ -8,7 +8,7 @@ and live visual subgraph payloads for the Next.js War Room dashboard.
 from typing import Optional, Dict, Any, List
 from fastapi import FastAPI, HTTPException, Body, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from src.config import settings
 from src.utils.logger import logger
@@ -91,13 +91,53 @@ class SilosRequest(BaseModel):
 
 
 class ResolveAuthRequest(BaseModel):
-    compromise_ttl_minutes: int = Field(default=30, description="Compromise JWT TTL in minutes", examples=[30])
+    compromise_ttl_minutes: int = Field(
+        default=30,
+        ge=5,
+        le=10080,
+        description="Compromise JWT TTL in minutes (bounds: 5m to 10,080m [7 days])",
+        examples=[30],
+    )
+    confirm_compliance_override: bool = Field(
+        default=False,
+        description="Explicit confirmation flag required when configuring TTL > 120m due to PCI-DSS/session hijacking risk",
+    )
     graph: Optional[str] = Field(default=None, description="Target multigraph tenant to mutate", examples=["merged_brain"])
+
+    @model_validator(mode="after")
+    def validate_ttl_compliance(self) -> "ResolveAuthRequest":
+        if self.compromise_ttl_minutes > 120 and not self.confirm_compliance_override:
+            raise ValueError(
+                f"Compromise TTL of {self.compromise_ttl_minutes}m exceeds standard 120m security threshold. "
+                f"Long-lived sessions introduce session hijacking and PCI-DSS compliance risks. "
+                f"Set 'confirm_compliance_override=True' to confirm this compliance exception."
+            )
+        return self
 
 
 class ResolveRetentionRequest(BaseModel):
-    retention_days: int = Field(default=90, description="Audit retention period in days", examples=[90])
+    retention_days: int = Field(
+        default=90,
+        ge=30,
+        le=3650,
+        description="Audit retention period in days (bounds: 30 days to 3,650 days [10 years])",
+        examples=[90],
+    )
+    confirm_compliance_override: bool = Field(
+        default=False,
+        description="Explicit confirmation flag required when setting retention < 60 days (regulatory audit trail risk) or > 730 days (GDPR data minimization risk)",
+    )
     graph: Optional[str] = Field(default=None, description="Target multigraph tenant to mutate", examples=["merged_brain"])
+
+    @model_validator(mode="after")
+    def validate_retention_compliance(self) -> "ResolveRetentionRequest":
+        if (self.retention_days < 60 or self.retention_days > 730) and not self.confirm_compliance_override:
+            risk_desc = "regulatory audit trail gap (< 60 days)" if self.retention_days < 60 else "GDPR data minimization / storage risk (> 730 days)"
+            raise ValueError(
+                f"Retention duration of {self.retention_days} days carries significant compliance implications ({risk_desc}). "
+                f"Set 'confirm_compliance_override=True' to confirm this compliance exception."
+            )
+        return self
 
 
 class MergeTeamsRequest(BaseModel):
@@ -258,7 +298,11 @@ def resolve_auth_conflict(req: Optional[ResolveAuthRequest] = Body(default=None)
         target_graph = validate_graph(req.graph if req else None)
         engine = get_mutation_engine(target_graph)
         ttl = req.compromise_ttl_minutes if req else 30
-        return engine.resolve_auth_conflict(compromise_ttl_minutes=ttl)
+        override = req.confirm_compliance_override if req else False
+        return engine.resolve_auth_conflict(compromise_ttl_minutes=ttl, confirm_compliance_override=override)
+    except ValueError as ve:
+        logger.warning(f"Validation error in resolve_auth_conflict: {ve}")
+        raise HTTPException(status_code=400, detail=str(ve))
     except HTTPException:
         raise
     except Exception as e:
@@ -273,7 +317,11 @@ def resolve_retention_conflict(req: Optional[ResolveRetentionRequest] = Body(def
         target_graph = validate_graph(req.graph if req else None)
         engine = get_mutation_engine(target_graph)
         days = req.retention_days if req else 90
-        return engine.resolve_retention_conflict(retention_days=days)
+        override = req.confirm_compliance_override if req else False
+        return engine.resolve_retention_conflict(retention_days=days, confirm_compliance_override=override)
+    except ValueError as ve:
+        logger.warning(f"Validation error in resolve_retention_conflict: {ve}")
+        raise HTTPException(status_code=400, detail=str(ve))
     except HTTPException:
         raise
     except Exception as e:

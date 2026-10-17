@@ -25,11 +25,27 @@ class LiveMutationEngine:
     def _get_graph(self):
         return db_client.get_graph(self.graph_name)
 
-    def resolve_auth_conflict(self, compromise_ttl_minutes: int = 30) -> Dict[str, Any]:
+    def resolve_auth_conflict(
+        self,
+        compromise_ttl_minutes: int = 30,
+        confirm_compliance_override: bool = False,
+    ) -> Dict[str, Any]:
         """Resolves the critical authentication token conflict between FinPay (15-min)
-
         and Vaultly (7-day) by creating a unified hybrid M&A policy and updating lineage.
+        Validates domain bounds (5m to 10,080m) and requires compliance confirmation for TTL > 120m (B15).
         """
+        if not isinstance(compromise_ttl_minutes, (int, float)) or compromise_ttl_minutes < 5 or compromise_ttl_minutes > 10080:
+            raise ValueError(
+                f"Invalid compromise_ttl_minutes: {compromise_ttl_minutes}. "
+                f"Must be between 5 minutes and 10,080 minutes (7 days)."
+            )
+        compromise_ttl_minutes = int(compromise_ttl_minutes)
+        if compromise_ttl_minutes > 120 and not confirm_compliance_override:
+            raise ValueError(
+                f"Compromise TTL of {compromise_ttl_minutes}m exceeds standard 120m security threshold with significant compliance risk. "
+                f"Set confirm_compliance_override=True to proceed."
+            )
+
         graph = self._get_graph()
         now_ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         today_date = datetime.now().strftime("%Y-%m-%d")
@@ -188,6 +204,11 @@ class LiveMutationEngine:
                 "policy_status": "ACTIVE",
                 "decision_status": "ACTIVE",
             },
+            "compliance_verification": {
+                "ttl_minutes": compromise_ttl_minutes,
+                "within_standard_bounds": (5 <= compromise_ttl_minutes <= 120),
+                "compliance_override_active": confirm_compliance_override,
+            },
             "resolution_summary": (
                 f"Established 'Unified M&A Adaptive Session Policy' ({compromise_ttl_minutes}-minute session tokens with biometric refresh). "
                 "Deprecated conflicting legacy policies and re-governed Gatekeeper-Auth and Pulse-Identity under the unified security standard."
@@ -195,11 +216,28 @@ class LiveMutationEngine:
             "subgraph": subgraph.model_dump(),
         }
 
-    def resolve_retention_conflict(self, retention_days: int = 90) -> Dict[str, Any]:
+    def resolve_retention_conflict(
+        self,
+        retention_days: int = 90,
+        confirm_compliance_override: bool = False,
+    ) -> Dict[str, Any]:
         """Resolves the data retention conflict between FinPay (30 days) and Vaultly (180 days)
-
         by creating a partitioned tiered audit standard.
+        Validates domain bounds (30d to 3,650d) and requires compliance confirmation for retention < 60d or > 730d (B15).
         """
+        if not isinstance(retention_days, (int, float)) or retention_days < 30 or retention_days > 3650:
+            raise ValueError(
+                f"Invalid retention_days: {retention_days}. "
+                f"Must be between 30 and 3,650 days (10 years)."
+            )
+        retention_days = int(retention_days)
+        if (retention_days < 60 or retention_days > 730) and not confirm_compliance_override:
+            risk_desc = "regulatory audit trail gap (< 60 days)" if retention_days < 60 else "GDPR data minimization / storage risk (> 730 days)"
+            raise ValueError(
+                f"Retention duration of {retention_days} days carries significant compliance risk ({risk_desc}). "
+                f"Set confirm_compliance_override=True to proceed."
+            )
+
         graph = self._get_graph()
         now_ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         today_date = datetime.now().strftime("%Y-%m-%d")
@@ -341,6 +379,11 @@ class LiveMutationEngine:
                 "policy_id": pol_id,
                 "policy_status": "ACTIVE",
                 "decision_status": "ACTIVE",
+            },
+            "compliance_verification": {
+                "retention_days": retention_days,
+                "within_standard_bounds": (60 <= retention_days <= 730),
+                "compliance_override_active": confirm_compliance_override,
             },
             "resolution_summary": (
                 f"Enacted 'Unified M&A Tiered Log & Audit Retention Policy' ({retention_days}-day encrypted cold storage for compliance). "
@@ -589,44 +632,120 @@ class LiveMutationEngine:
         }
 
     def reset_demo(self, include_subgraph: bool = True) -> Dict[str, Any]:
-        """Resets FalkorDB multigraphs to pristine initial Phase 1/2 state with multi-stage verification (B10)."""
+        """Resets FalkorDB multigraphs to pristine initial Phase 1/2 state with multi-stage verification (B10, B16).
+        Aggregates seed results, fails if any graph encounters failures, and only announces success
+        after verifying that all expected graphs, nodes, and bridge relationships are present.
+        """
         from src.data.seed import seed_all_graphs
         from src.pipeline.auto_linker import auto_linker_engine
 
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        logger.info(f"[{self.graph_name}] Resetting demo multigraphs in FalkorDB with multi-stage verification...")
+        logger.info(f"[{self.graph_name}] Resetting demo multigraphs in FalkorDB with multi-stage verification (B16)...")
 
-        # Stage 1: Seeding with strict failure check (destructive baseline restoration B11)
+        expected_graphs = [settings.graph_finpay, settings.graph_vaultly, settings.graph_merged]
+
+        # Stage 1: Seeding with strict failure check across all graphs (destructive baseline restoration B11, B16)
         seed_result = seed_all_graphs(clear_first=True, preserve_runtime_state=False)
-        if seed_result.get("status") != "success" or seed_result.get("total_failures", 0) > 0:
-            err_msg = f"Reset failed during graph seeding stage: {seed_result.get('total_failures')} statement(s) failed."
+        total_failures = seed_result.get("total_failures", 0)
+        if seed_result.get("status") != "success" or total_failures > 0:
+            err_msg = f"Reset failed during graph seeding stage: {total_failures} statement(s) failed."
             logger.error(f"[{self.graph_name}] {err_msg}")
             raise RuntimeError(err_msg)
 
-        # Stage 2: Entity resolution and auto-linker pipeline
-        pipeline_summary = auto_linker_engine.run_pipeline(self.graph_name)
+        # Check each graph specifically from seed summary
+        graphs_summary = seed_result.get("graphs", {})
+        for g_name in expected_graphs:
+            g_data = graphs_summary.get(g_name)
+            if not g_data:
+                raise RuntimeError(f"Reset failed during graph seeding stage: Expected graph '{g_name}' was not seeded.")
+            if g_data.get("status") != "success" or g_data.get("failed", 0) > 0:
+                raise RuntimeError(
+                    f"Reset failed during graph seeding stage: Graph '{g_name}' had {g_data.get('failed', 0)} failure(s)."
+                )
+            if g_data.get("node_count", 0) == 0:
+                raise RuntimeError(
+                    f"Reset failed during graph seeding stage: Graph '{g_name}' has 0 nodes after seeding."
+                )
 
-        # Stage 3: Post-verification check of target graph
-        graph = self._get_graph()
+        # Stage 2: Entity resolution and auto-linker pipeline (run on merged_brain and target graph)
+        pipeline_summary = auto_linker_engine.run_pipeline(settings.graph_merged)
+        if self.graph_name != settings.graph_merged:
+            auto_linker_engine.run_pipeline(self.graph_name)
+
+        if pipeline_summary.get("total_bridges_created", 0) == 0:
+            raise RuntimeError(
+                f"Reset failed during auto-linker stage: 0 cross-company bridge relationships created in '{settings.graph_merged}'."
+            )
+
+        # Stage 3: Complete baseline graph & bridge verification (B16)
+        verified_graphs: Dict[str, Dict[str, Any]] = {}
+        for g_name in expected_graphs:
+            try:
+                g_client = db_client.get_graph(g_name)
+                n_res = g_client.query("MATCH (n) RETURN count(n) as node_count").result_set
+                r_res = g_client.query("MATCH ()-[r]->() RETURN count(r) as rel_count").result_set
+                node_cnt = n_res[0][0] if n_res else 0
+                rel_cnt = r_res[0][0] if r_res else 0
+            except Exception as e:
+                raise RuntimeError(f"Post-reset verification failed for '{g_name}': {e}")
+
+            min_expected_nodes = 20 if g_name != settings.graph_merged else 40
+            if node_cnt < min_expected_nodes:
+                raise RuntimeError(
+                    f"Post-reset verification failed for '{g_name}': Expected at least {min_expected_nodes} nodes, found {node_cnt}."
+                )
+
+            verified_graphs[g_name] = {"node_count": node_cnt, "rel_count": rel_cnt}
+
+        # Verify bridge relationships in merged_brain
         try:
-            cnt_res = graph.query("MATCH (n) RETURN count(n) as node_count").result_set
-            node_cnt = cnt_res[0][0] if cnt_res else 0
+            merged_client = db_client.get_graph(settings.graph_merged)
+            red_res = merged_client.query("MATCH ()-[r:REDUNDANT_WITH]->() RETURN count(r)").result_set
+            conf_res = merged_client.query("MATCH ()-[r:CONFLICTS_WITH]->() RETURN count(r)").result_set
+            red_count = red_res[0][0] if red_res else 0
+            conf_count = conf_res[0][0] if conf_res else 0
         except Exception as e:
-            raise RuntimeError(f"Post-reset verification failed: {e}")
+            raise RuntimeError(f"Post-reset bridge verification failed: {e}")
 
-        if node_cnt == 0:
-            raise RuntimeError(f"Post-reset verification failed: Graph '{self.graph_name}' has 0 nodes after reset.")
+        if red_count < 3:
+            raise RuntimeError(
+                f"Post-reset verification failed: Expected at least 3 REDUNDANT_WITH bridges in '{settings.graph_merged}', found {red_count}."
+            )
+        if conf_count < 2:
+            raise RuntimeError(
+                f"Post-reset verification failed: Expected at least 2 CONFLICTS_WITH bridges in '{settings.graph_merged}', found {conf_count}."
+            )
+
+        verified_graphs[settings.graph_merged]["redundant_bridges"] = red_count
+        verified_graphs[settings.graph_merged]["conflict_bridges"] = conf_count
+
+        target_node_count = verified_graphs.get(self.graph_name, {}).get("node_count", verified_graphs[settings.graph_merged]["node_count"])
 
         result: Dict[str, Any] = {
             "action": "reset_demo",
             "status": "success",
             "timestamp": now_str,
             "stages": {
-                "seeding": {"status": "success", "graphs_seeded": list(seed_result.get("graphs", {}).keys())},
-                "auto_linker": {"status": "success", "bridges_linked": pipeline_summary.get("total_bridges_created", 0)},
-                "verification": {"status": "success", "node_count": node_cnt},
+                "seeding": {
+                    "status": "success",
+                    "graphs_seeded": list(graphs_summary.keys()),
+                    "total_failures": 0,
+                },
+                "auto_linker": {
+                    "status": "success",
+                    "bridges_linked": pipeline_summary.get("total_bridges_created", 0),
+                    "redundant_bridges": red_count,
+                    "conflict_bridges": conf_count,
+                },
+                "verification": {
+                    "status": "success",
+                    "node_count": target_node_count,
+                    "all_graphs_verified": True,
+                    "verified_graphs": verified_graphs,
+                },
             },
-            "message": "FalkorDB multigraphs reset and auto-linked successfully.",
+            "verified_graphs": verified_graphs,
+            "message": "FalkorDB multigraphs reset and auto-linked successfully with complete baseline verification.",
             "pipeline_summary": pipeline_summary,
         }
 

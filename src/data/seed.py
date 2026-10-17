@@ -48,7 +48,9 @@ def seed_graph(
             logger.info(f"[{graph_name}] Flushing existing graph data...")
             graph.query("MATCH (n) DETACH DELETE n")
         except Exception as e:
-            logger.warning(f"[{graph_name}] Could not clear graph: {e}")
+            logger.error(f"[{graph_name}] Could not clear graph: {e}")
+            error_count += 1
+            failed_details.append({"clear_graph_error": str(e)})
 
     logger.info(f"[{graph_name}] Executing {len(queries)} Cypher statements...")
     for idx, query in enumerate(queries, 1):
@@ -113,8 +115,23 @@ def seed_all_graphs(
     scripts = generate_graph_cypher_scripts(preserve_runtime_state=preserve_runtime_state)
     summary = {}
     total_failed = 0
+    expected_graphs = [settings.graph_finpay, settings.graph_vaultly, settings.graph_merged]
 
-    for graph_name, queries in scripts.items():
+    for graph_name in expected_graphs:
+        queries = scripts.get(graph_name)
+        if not queries:
+            logger.error(f"Missing Cypher queries for expected graph '{graph_name}'")
+            total_failed += 1
+            summary[graph_name] = {
+                "status": "failed",
+                "success": 0,
+                "failed": 1,
+                "node_count": 0,
+                "rel_count": 0,
+                "errors": [{"missing_queries": f"No queries generated for {graph_name}"}],
+            }
+            continue
+
         logger.info(f"=== Seeding {graph_name} ===")
         res = seed_graph(
             graph_name,

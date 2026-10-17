@@ -353,4 +353,92 @@ def test_reseed_preserves_live_mutation_state_and_destructive_reset(mutation_eng
     assert check_baseline[0][1] is None or check_baseline[0][1] == ""
 
 
+def test_policy_resolution_sensible_bounds_and_compliance_confirmation(mutation_engine):
+    """Verifies B15: Pydantic constraints, domain validation bounds, and compliance override confirmations."""
+    from fastapi.testclient import TestClient
+    from src.api.main import app
+
+    client = TestClient(app)
+    headers = {"X-API-Key": "orgbridge-war-room-2026"}
+
+    # 1. Negative or zero values rejected by engine (ValueError)
+    with pytest.raises(ValueError, match="Invalid compromise_ttl_minutes"):
+        mutation_engine.resolve_auth_conflict(compromise_ttl_minutes=-5)
+    with pytest.raises(ValueError, match="Invalid compromise_ttl_minutes"):
+        mutation_engine.resolve_auth_conflict(compromise_ttl_minutes=0)
+    with pytest.raises(ValueError, match="Invalid compromise_ttl_minutes"):
+        mutation_engine.resolve_auth_conflict(compromise_ttl_minutes=2)
+
+    with pytest.raises(ValueError, match="Invalid retention_days"):
+        mutation_engine.resolve_retention_conflict(retention_days=-10)
+    with pytest.raises(ValueError, match="Invalid retention_days"):
+        mutation_engine.resolve_retention_conflict(retention_days=10)
+
+    # 2. Compliance confirmation required for TTL > 120m
+    with pytest.raises(ValueError, match="exceeds standard 120m security threshold"):
+        mutation_engine.resolve_auth_conflict(compromise_ttl_minutes=180, confirm_compliance_override=False)
+
+    # With override, high TTL succeeds
+    res_high_ttl = mutation_engine.resolve_auth_conflict(compromise_ttl_minutes=180, confirm_compliance_override=True)
+    assert res_high_ttl["status"] == "success"
+    assert res_high_ttl["compliance_verification"]["compliance_override_active"] is True
+
+    # 3. Compliance confirmation required for retention < 60d or > 730d
+    with pytest.raises(ValueError, match="significant compliance risk"):
+        mutation_engine.resolve_retention_conflict(retention_days=45, confirm_compliance_override=False)
+
+    # With override, retention exception succeeds
+    res_ret_override = mutation_engine.resolve_retention_conflict(retention_days=45, confirm_compliance_override=True)
+    assert res_ret_override["status"] == "success"
+    assert res_ret_override["compliance_verification"]["compliance_override_active"] is True
+
+    # 4. HTTP endpoint Pydantic and compliance enforcement
+    # Bounds violations return 422
+    res_bad_ttl = client.post("/api/mutate/resolve-auth-conflict", json={"compromise_ttl_minutes": 2}, headers=headers)
+    assert res_bad_ttl.status_code == 422
+
+    res_bad_ret = client.post("/api/mutate/resolve-retention-conflict", json={"retention_days": 10}, headers=headers)
+    assert res_bad_ret.status_code == 422
+
+    # High compliance risk without confirmation returns 422 or 400
+    res_risk_no_override = client.post(
+        "/api/mutate/resolve-auth-conflict",
+        json={"compromise_ttl_minutes": 180, "confirm_compliance_override": False},
+        headers=headers,
+    )
+    assert res_risk_no_override.status_code in (400, 422)
+
+    # High compliance risk WITH confirmation returns 200
+    res_risk_ok = client.post(
+        "/api/mutate/resolve-auth-conflict",
+        json={"compromise_ttl_minutes": 180, "confirm_compliance_override": True},
+        headers=headers,
+    )
+    assert res_risk_ok.status_code == 200
+    assert res_risk_ok.json()["compliance_verification"]["compliance_override_active"] is True
+
+
+def test_reset_demo_verifies_all_graphs_and_bridges(mutation_engine, monkeypatch):
+    """Verifies B16: Complete baseline verification fails if any graph or bridge relationships are missing."""
+    # 1. Successful reset asserts that all 3 graphs and bridges are verified
+    res = mutation_engine.reset_demo(include_subgraph=False)
+    assert res["status"] == "success"
+    assert "verified_graphs" in res
+    assert settings.graph_finpay in res["verified_graphs"]
+    assert settings.graph_vaultly in res["verified_graphs"]
+    assert settings.graph_merged in res["verified_graphs"]
+    assert res["stages"]["auto_linker"]["redundant_bridges"] >= 3
+    assert res["stages"]["auto_linker"]["conflict_bridges"] >= 2
+    assert res["stages"]["verification"]["all_graphs_verified"] is True
+
+    # 2. Failure propagation if auto-linker creates 0 bridges
+    from src.pipeline import auto_linker
+    def mock_empty_linker(*args, **kwargs):
+        return {"total_bridges_created": 0, "redundant_links_created": 0, "conflict_links_created": 0}
+
+    monkeypatch.setattr(auto_linker.auto_linker_engine, "run_pipeline", mock_empty_linker)
+    with pytest.raises(RuntimeError, match="Reset failed during auto-linker stage: 0 cross-company bridge relationships"):
+        mutation_engine.reset_demo(include_subgraph=False)
+
+
 
