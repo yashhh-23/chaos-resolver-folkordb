@@ -4,6 +4,10 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "OrgBridge AI — M&A War Room",
   description: "FalkorDB Powered M&A Chaos Resolver (Track 03: Company Brain)",
+  icons: {
+    icon: "/favicon.svg",
+    shortcut: "/favicon.svg",
+  },
 };
 
 export default function RootLayout({
