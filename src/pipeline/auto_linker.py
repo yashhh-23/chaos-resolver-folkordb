@@ -8,7 +8,7 @@ Performs Hybrid Vector + Graph Entity Resolution:
    where similarity exceeds the specified threshold (default from settings).
 """
 
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from src.config import settings
 from src.utils.logger import logger
 from src.db.client import db_client
@@ -28,6 +28,43 @@ class AutoLinkerEngine:
 
     def __init__(self, threshold: Optional[float] = None):
         self.threshold = threshold if threshold is not None else settings.auto_linker_threshold
+
+    def _resolve_candidate_pairs(
+        self,
+        graph_name: str,
+        entity_label: str,
+        source_vec: List[float],
+        all_candidates: Dict[str, Dict[str, Any]],
+        company_target: str,
+        embed_candidate_fn: Any,
+    ) -> List[Tuple[str, float]]:
+        """Resolves target candidate pairs and similarities using vector index with pairwise fallback."""
+        try:
+            neighbors = query_vector_neighbors(graph_name, entity_label, source_vec, k=10)
+        except Exception as e:
+            logger.warning(f"Native vector search failed, falling back to pairwise check: {e}")
+            neighbors = []
+
+        candidates: List[Tuple[str, float]] = []
+        if neighbors:
+            for node, distance in neighbors:
+                props = node.properties if hasattr(node, "properties") else {}
+                if props.get("company_origin") == company_target:
+                    cand_id = props.get("id")
+                    cand_info = all_candidates.get(cand_id)
+                    if cand_info:
+                        cand_vec = embed_candidate_fn(cand_info)
+                        sim = embedding_service.cosine_similarity(source_vec, cand_vec)
+                    else:
+                        sim = round(max(0.0, 1.0 - float(distance)), 2)
+                    candidates.append((cand_id, sim))
+        else:
+            for cand_id, cand_info in all_candidates.items():
+                cand_vec = embed_candidate_fn(cand_info)
+                sim = embedding_service.cosine_similarity(source_vec, cand_vec)
+                candidates.append((cand_id, sim))
+
+        return candidates
 
     def detect_redundant_systems(
         self,
@@ -73,37 +110,16 @@ class AutoLinkerEngine:
                 system_embedding_text(fp_name, fp_domain, fp_tech, fp_desc)
             )
 
-            # Query FalkorDB vector space for top neighbor candidates
-            try:
-                neighbors = query_vector_neighbors(graph_name, "System", fp_vec, k=10)
-            except Exception as e:
-                logger.warning(f"Native vector search failed, falling back to pairwise check: {e}")
-                neighbors = []
-
-            if neighbors:
-                candidates = []
-                for node, distance in neighbors:
-                    props = node.properties if hasattr(node, "properties") else {}
-                    if props.get("company_origin") == company_b:
-                        vl_id = props.get("id")
-                        vl_info = vl_systems.get(vl_id)
-                        if vl_info:
-                            vl_vec = embedding_service.embed_text(
-                                system_embedding_text(vl_info["name"], vl_info["domain"], vl_info["tech"], vl_info["desc"])
-                            )
-                            # Compute canonical cosine similarity directly to avoid engine distance metric ambiguity
-                            cos_sim = embedding_service.cosine_similarity(fp_vec, vl_vec)
-                        else:
-                            cos_sim = round(max(0.0, 1.0 - float(distance)), 2)
-                        candidates.append((vl_id, cos_sim))
-            else:
-                candidates = []
-                for vl_id, vl_info in vl_systems.items():
-                    vl_vec = embedding_service.embed_text(
-                        system_embedding_text(vl_info["name"], vl_info["domain"], vl_info["tech"], vl_info["desc"])
-                    )
-                    cos_sim = embedding_service.cosine_similarity(fp_vec, vl_vec)
-                    candidates.append((vl_id, cos_sim))
+            candidates = self._resolve_candidate_pairs(
+                graph_name=graph_name,
+                entity_label="System",
+                source_vec=fp_vec,
+                all_candidates=vl_systems,
+                company_target=company_b,
+                embed_candidate_fn=lambda info: embedding_service.embed_text(
+                    system_embedding_text(info["name"], info["domain"], info["tech"], info["desc"])
+                ),
+            )
 
             for vl_id, cos_sim in candidates:
                 vl_info = vl_systems.get(vl_id)
@@ -193,36 +209,16 @@ class AutoLinkerEngine:
             fp_id, fp_name, fp_domain, fp_desc, fp_src = fp_row
             fp_vec = embedding_service.embed_text(policy_embedding_text(fp_name, fp_domain, fp_desc))
 
-            try:
-                neighbors = query_vector_neighbors(graph_name, "Policy", fp_vec, k=10)
-            except Exception as e:
-                logger.warning(f"Native vector search failed, falling back to pairwise check: {e}")
-                neighbors = []
-
-            if neighbors:
-                candidates = []
-                for node, distance in neighbors:
-                    props = node.properties if hasattr(node, "properties") else {}
-                    if props.get("company_origin") == company_b:
-                        vl_id = props.get("id")
-                        vl_info = vl_map.get(vl_id)
-                        if vl_info:
-                            vl_vec = embedding_service.embed_text(
-                                policy_embedding_text(vl_info["name"], vl_info["domain"], vl_info["desc"])
-                            )
-                            sim = embedding_service.cosine_similarity(fp_vec, vl_vec)
-                        else:
-                            sim = round(max(0.0, 1.0 - float(distance)), 2)
-                        candidates.append((vl_id, sim))
-
-            else:
-                candidates = []
-                for vl_id, vl_info in vl_map.items():
-                    vl_vec = embedding_service.embed_text(
-                        policy_embedding_text(vl_info["name"], vl_info["domain"], vl_info["desc"])
-                    )
-                    sim = embedding_service.cosine_similarity(fp_vec, vl_vec)
-                    candidates.append((vl_id, sim))
+            candidates = self._resolve_candidate_pairs(
+                graph_name=graph_name,
+                entity_label="Policy",
+                source_vec=fp_vec,
+                all_candidates=vl_map,
+                company_target=company_b,
+                embed_candidate_fn=lambda info: embedding_service.embed_text(
+                    policy_embedding_text(info["name"], info["domain"], info["desc"])
+                ),
+            )
 
             for vl_id, sim in candidates:
                 vl_info = vl_map.get(vl_id)
@@ -311,36 +307,16 @@ class AutoLinkerEngine:
             fp_vec = embedding_service.embed_text(decision_embedding_text(fp_summary, fp_auth, fp_src))
             fp_domains = set([d for d in (fp_sys_doms or []) + (fp_pol_doms or []) if d])
 
-            try:
-                neighbors = query_vector_neighbors(graph_name, "Decision", fp_vec, k=10)
-            except Exception as e:
-                logger.warning(f"Native vector search failed, falling back to pairwise check: {e}")
-                neighbors = []
-
-            if neighbors:
-                candidates = []
-                for node, distance in neighbors:
-                    props = node.properties if hasattr(node, "properties") else {}
-                    if props.get("company_origin") == company_b:
-                        vl_id = props.get("id")
-                        vl_info = vl_map.get(vl_id)
-                        if vl_info:
-                            vl_vec = embedding_service.embed_text(
-                                decision_embedding_text(vl_info["summary"], vl_info["auth"], vl_info["source"])
-                            )
-                            sim = embedding_service.cosine_similarity(fp_vec, vl_vec)
-                        else:
-                            sim = round(max(0.0, 1.0 - float(distance)), 2)
-                        candidates.append((vl_id, sim))
-
-            else:
-                candidates = []
-                for vl_id, vl_info in vl_map.items():
-                    vl_vec = embedding_service.embed_text(
-                        decision_embedding_text(vl_info["summary"], vl_info["auth"], vl_info["source"])
-                    )
-                    sim = embedding_service.cosine_similarity(fp_vec, vl_vec)
-                    candidates.append((vl_id, sim))
+            candidates = self._resolve_candidate_pairs(
+                graph_name=graph_name,
+                entity_label="Decision",
+                source_vec=fp_vec,
+                all_candidates=vl_map,
+                company_target=company_b,
+                embed_candidate_fn=lambda info: embedding_service.embed_text(
+                    decision_embedding_text(info["summary"], info["auth"], info["source"])
+                ),
+            )
 
             for vl_id, sim in candidates:
                 vl_info = vl_map.get(vl_id)
