@@ -91,6 +91,8 @@ const TOOL_DISPLAY_NAMES: Record<string, string> = {
   get_warm_intro_path: "Warm Introduction",
   detect_organizational_silos: "Silo Isolation",
   schema_constrained_cypher: "Graph Intelligence",
+  llm_agent: "AI Reasoning",
+  error: "System Notice",
 };
 
 function formatToolBadge(name?: string): string {
@@ -398,7 +400,8 @@ export default function ChatPanel({
         {
           id: (Date.now() + 1).toString(),
           sender: "agent",
-          text: `⚠️ **Error querying graph**: ${err.message || err}`,
+          toolName: "error",
+          text: `**Query Error**: ${err.message || err}`,
           timestamp: "Error",
         },
       ]);
@@ -455,10 +458,11 @@ export default function ChatPanel({
 
       // Re-fetch or update the full graph from FalkorDB so main canvas reflects mutations
       if (action === "reset-demo") {
-        // For reset-demo, res.subgraph already contains the full refreshed graph.
-        // Pass it directly to avoid an unnecessary second GET /api/graph/subgraph round-trip.
-        if (onFullGraphRefresh && res.subgraph) {
-          await onFullGraphRefresh(res.subgraph);
+        // If viewing merged_brain, pass res.subgraph directly; if isolated tenant, re-fetch that tenant's baseline
+        if (selectedGraph === "merged_brain" && res.subgraph) {
+          if (onFullGraphRefresh) {
+            await onFullGraphRefresh(res.subgraph);
+          }
         } else if (onFullGraphRefresh) {
           await onFullGraphRefresh();
         }
@@ -479,7 +483,8 @@ export default function ChatPanel({
         {
           id: (Date.now() + 1).toString(),
           sender: "agent",
-          text: `⚠️ **Mutation Error**: ${err.message || err}`,
+          toolName: "error",
+          text: `**Mutation Error**: ${err.message || err}`,
           timestamp: "Error",
         },
       ]);
@@ -702,7 +707,8 @@ export default function ChatPanel({
         {
           id: (Date.now() + 1).toString(),
           sender: "agent",
-          text: `⚠️ **Query Error**: ${err.message}`,
+          toolName: "error",
+          text: `**Query Error**: ${err.message || err}`,
           timestamp: "Error",
         },
       ]);
@@ -838,68 +844,99 @@ export default function ChatPanel({
 
       {/* Message Feed */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {messages.map((m) => (
-          <div
-            key={m.id}
-            className={`flex flex-col ${
-              m.sender === "user" ? "items-end" : "items-start"
-            }`}
-          >
-            <div className="flex items-center gap-1.5 mb-1 text-[11px] text-slate-400">
-              {m.sender === "user" ? (
-                <>
-                  <span>You</span>
-                  <User className="w-3.5 h-3.5 text-slate-400" />
-                </>
-              ) : (
-                <>
-                  <Bot className="w-3.5 h-3.5 text-cyan-400" />
-                  <span className="font-semibold text-slate-300">OrgBridge Agent</span>
-                  {m.toolName && (
-                    <span className="bg-cyan-950/70 text-[10px] text-cyan-300 px-2 py-0.5 rounded-full border border-cyan-700/60 font-medium tracking-wide">
-                      {formatToolBadge(m.toolName)}
-                    </span>
-                  )}
-                </>
-              )}
-            </div>
+        {messages.map((m) => {
+          const isErrorMsg =
+            m.toolName === "error" ||
+            m.text.startsWith("**Mutation Error**:") ||
+            m.text.startsWith("**Query Error**:") ||
+            m.text.includes("Mutation Error") ||
+            m.text.includes("Query Error");
 
+          return (
             <div
-              className={`p-3.5 rounded-xl max-w-[92%] text-xs leading-relaxed shadow-lg ${
-                m.sender === "user"
-                  ? "bg-blue-600 text-white rounded-tr-none font-medium"
-                  : "bg-slate-800/90 border border-slate-700/70 text-slate-200 rounded-tl-none"
+              key={m.id}
+              className={`flex flex-col ${
+                m.sender === "user" ? "items-end" : "items-start"
               }`}
             >
-              {m.sender === "user" ? (
-                <div className="whitespace-pre-wrap break-words">{m.text}</div>
-              ) : (
-                <div
-                  className="space-y-1.5 break-words"
-                  dangerouslySetInnerHTML={{
-                    __html: renderSafeMarkdown(m.text),
-                  }}
-                />
-              )}
+              <div className="flex items-center gap-1.5 mb-1 text-[11px] text-slate-400">
+                {m.sender === "user" ? (
+                  <>
+                    <span>You</span>
+                    <User className="w-3.5 h-3.5 text-slate-400" />
+                  </>
+                ) : (
+                  <>
+                    <Bot className={`w-3.5 h-3.5 ${isErrorMsg ? "text-red-400" : "text-cyan-400"}`} />
+                    <span className={`font-semibold ${isErrorMsg ? "text-red-300" : "text-slate-300"}`}>
+                      OrgBridge Agent
+                    </span>
+                    {m.toolName && (
+                      <span
+                        className={`text-[10px] px-2 py-0.5 rounded-full border font-medium tracking-wide ${
+                          isErrorMsg
+                            ? "bg-red-950/80 text-red-300 border-red-700/70"
+                            : "bg-cyan-950/70 text-cyan-300 border-cyan-700/60"
+                        }`}
+                      >
+                        {formatToolBadge(m.toolName)}
+                      </span>
+                    )}
+                  </>
+                )}
+              </div>
 
-              {m.subgraph && m.subgraph.nodes.length > 0 && (
-                <div className="mt-3 pt-2 border-t border-slate-700/60 flex items-center justify-between text-[11px]">
-                  <span className="text-slate-400">
-                    Traversed: {m.subgraph.nodes.length} nodes, {m.subgraph.edges.length} edges
-                  </span>
-                  <button
-                    onClick={() => onSubgraphUpdate(m.subgraph || null)}
-                    className="flex items-center gap-1 text-cyan-400 hover:text-cyan-300 font-medium transition"
-                  >
-                    <Layers className="w-3 h-3" />
-                    Inspect on Canvas
-                  </button>
-                </div>
-              )}
+              <div
+                className={`p-3.5 rounded-xl max-w-[92%] text-xs leading-relaxed shadow-lg ${
+                  m.sender === "user"
+                    ? "bg-blue-600 text-white rounded-tr-none font-medium"
+                    : isErrorMsg
+                    ? "bg-red-950/40 border border-red-700/70 text-red-200 rounded-tl-none shadow-red-950/20"
+                    : "bg-slate-800/90 border border-slate-700/70 text-slate-200 rounded-tl-none"
+                }`}
+              >
+                {m.sender === "user" ? (
+                  <div className="whitespace-pre-wrap break-words">{m.text}</div>
+                ) : isErrorMsg ? (
+                  <div className="flex items-start gap-2.5">
+                    <div className="p-1 rounded-md bg-red-900/50 text-red-400 border border-red-700/60 shrink-0 mt-0.5">
+                      <ShieldAlert className="w-4 h-4 text-red-400" />
+                    </div>
+                    <div
+                      className="space-y-1 break-words text-red-200 flex-1 leading-relaxed"
+                      dangerouslySetInnerHTML={{
+                        __html: renderSafeMarkdown(m.text.replace(/^⚠️\s*/, "")),
+                      }}
+                    />
+                  </div>
+                ) : (
+                  <div
+                    className="space-y-1.5 break-words"
+                    dangerouslySetInnerHTML={{
+                      __html: renderSafeMarkdown(m.text),
+                    }}
+                  />
+                )}
+
+                {m.subgraph && m.subgraph.nodes.length > 0 && (
+                  <div className="mt-3 pt-2 border-t border-slate-700/60 flex items-center justify-between text-[11px]">
+                    <span className="text-slate-400">
+                      Traversed: {m.subgraph.nodes.length} nodes, {m.subgraph.edges.length} edges
+                    </span>
+                    <button
+                      onClick={() => onSubgraphUpdate(m.subgraph || null)}
+                      className="flex items-center gap-1 text-cyan-400 hover:text-cyan-300 font-medium transition"
+                    >
+                      <Layers className="w-3 h-3" />
+                      Inspect on Canvas
+                    </button>
+                  </div>
+                )}
+              </div>
+              <span className="text-[10px] text-slate-500 mt-1">{m.timestamp}</span>
             </div>
-            <span className="text-[10px] text-slate-500 mt-1">{m.timestamp}</span>
-          </div>
-        ))}
+          );
+        })}
 
         {isLoading && (
           <div className="flex items-center gap-2 p-3 bg-slate-800/60 rounded-xl border border-slate-700/50 text-slate-400 text-xs w-fit animate-pulse">

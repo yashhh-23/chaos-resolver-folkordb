@@ -83,18 +83,21 @@ export default function WarRoomDashboard() {
   };
 
   const handleFullGraphRefresh = async (freshData?: SubgraphData): Promise<void> => {
-    if (freshData && freshData.nodes && freshData.nodes.length > 0) {
+    if (freshData && freshData.nodes && freshData.nodes.length > 0 && selectedGraph === "merged_brain") {
       setGraphData(freshData);
       setIsHealthy(true);
     } else {
       try {
         const d = await fetchFullSubgraph(selectedGraph);
-        if (d && d.nodes) {
+        if (d && d.nodes && d.nodes.length > 0) {
           setGraphData(d);
           setIsHealthy(true);
+        } else {
+          setGraphData(getFallbackGraph(selectedGraph));
         }
       } catch (err) {
-        console.warn("Could not refresh full graph:", err);
+        console.warn("Could not refresh full graph, activating tenant fallback:", err);
+        setGraphData(getFallbackGraph(selectedGraph));
       }
     }
   };
