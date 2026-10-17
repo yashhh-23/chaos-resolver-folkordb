@@ -183,31 +183,20 @@ class GraphAgentTools:
 
     def detect_policy_conflicts(self, domain: Optional[str] = None) -> ToolResult:
         """Connects conflicting compliance, security, and retention policies
-
-        and traces them back to source RFCs and audit documents.
+        using a 3-stage pipeline: candidate generation, contradiction validation, and evidence reporting.
         """
         graph = self._get_graph()
         subgraph = Subgraph()
 
-        domain_filter = "AND (toLower(p1.domain) CONTAINS toLower($domain) OR toLower(p2.domain) CONTAINS toLower($domain))" if domain else ""
-        query = f"""
-            MATCH (p1:Policy)-[r:CONFLICTS_WITH]-(p2:Policy)
-            WHERE p1.id < p2.id
-              AND coalesce(r.status, 'ACTIVE') <> 'RESOLVED'
-              AND coalesce(p1.status, 'ACTIVE') <> 'DEPRECATED'
-              AND coalesce(p2.status, 'ACTIVE') <> 'DEPRECATED'
-            {domain_filter}
-            OPTIONAL MATCH (p1)-[:DERIVED_FROM]->(doc1:Document)
-            OPTIONAL MATCH (p2)-[:DERIVED_FROM]->(doc2:Document)
-            RETURN p1.id, p1.name, p1.domain, p1.description, p1.effective_date, p1.authority_level, p1.source, p1.company_origin,
-                   p2.id, p2.name, p2.domain, p2.description, p2.effective_date, p2.authority_level, p2.source, p2.company_origin,
-                   r.severity, r.reason,
-                   collect(DISTINCT {{id: doc1.id, title: doc1.title, url: doc1.url, excerpt: doc1.excerpt}}) as docs1,
-                   collect(DISTINCT {{id: doc2.id, title: doc2.title, url: doc2.url, excerpt: doc2.excerpt}}) as docs2
-        """
-        res = graph.query(query, {"domain": domain or ""})
+        from src.pipeline.policy_validator import policy_contradiction_engine
 
-        if not res.result_set:
+        # Execute 3-stage validation pipeline:
+        # Stage 1: Candidate Generation (cross-tenant pairs + existing edges)
+        # Stage 2: Contradiction Validation (numeric TTL/retention divergence, opposing mandates, authority hierarchy)
+        # Stage 3: Conflict Reporting & Evidence Storage
+        conflicts = policy_contradiction_engine.evaluate_graph_conflicts(graph, domain_filter=domain)
+
+        if not conflicts:
             # Check if any conflicts were resolved via M&A mutations
             resolved_res = graph.query("""
                 MATCH (p1:Policy)-[r:CONFLICTS_WITH]-(p2:Policy)
@@ -226,58 +215,64 @@ class GraphAgentTools:
                 subgraph=subgraph,
             )
 
-        conflicts = []
-        text_lines = [f"### M&A Policy & Compliance Conflicts Detected ({len(res.result_set)} Found)\n"]
+        text_lines = [f"### M&A Policy & Compliance Conflicts Detected ({len(conflicts)} Found)\n"]
 
-        for idx, row in enumerate(res.result_set, 1):
-            (
-                p1_id, p1_name, p1_domain, p1_desc, p1_eff, p1_auth, p1_src, p1_co,
-                p2_id, p2_name, p2_domain, p2_desc, p2_eff, p2_auth, p2_src, p2_co,
-                sev, reason,
-                docs1, docs2,
-            ) = row
-
-            docs1 = [d for d in docs1 if d.get("id")]
-            docs2 = [d for d in docs2 if d.get("id")]
-
-            d1 = docs1[0] if docs1 else {}
-            d2 = docs2[0] if docs2 else {}
-
-            conflicts.append({
-                "policy_a": {"id": p1_id, "name": p1_name, "company": p1_co, "date": p1_eff, "authority": p1_auth, "desc": p1_desc},
-                "policy_b": {"id": p2_id, "name": p2_name, "company": p2_co, "date": p2_eff, "authority": p2_auth, "desc": p2_desc},
-                "severity": sev,
-                "reason": reason,
-                "source_doc_a": d1,
-                "source_doc_b": d2,
-            })
+        for idx, item in enumerate(conflicts, 1):
+            p1 = item["policy_a"]
+            p2 = item["policy_b"]
+            sev = item["severity"]
+            reason = item["reason"]
+            c_type = item.get("contradiction_type", "POLICY_CONTRADICTION")
+            status = item.get("review_status", "CONFIRMED_CONTRADICTION")
+            auth_assess = item.get("authority_assessment", "")
 
             # Add to subgraph
-            subgraph.add_node(p1_id, p1_name, "Policy", p1_co, {"domain": p1_domain, "effective_date": p1_eff, "authority": p1_auth})
-            subgraph.add_node(p2_id, p2_name, "Policy", p2_co, {"domain": p2_domain, "effective_date": p2_eff, "authority": p2_auth})
-            subgraph.add_edge(p1_id, p2_id, "CONFLICTS_WITH", {"severity": sev, "reason": reason})
+            subgraph.add_node(p1["id"], p1["name"], "Policy", p1["company"], {
+                "domain": p1.get("domain"),
+                "effective_date": p1.get("date"),
+                "authority": p1.get("authority"),
+            })
+            subgraph.add_node(p2["id"], p2["name"], "Policy", p2["company"], {
+                "domain": p2.get("domain"),
+                "effective_date": p2.get("date"),
+                "authority": p2.get("authority"),
+            })
+            subgraph.add_edge(p1["id"], p2["id"], "CONFLICTS_WITH", {
+                "severity": sev,
+                "reason": reason,
+                "contradiction_type": c_type,
+                "review_status": status,
+            })
 
-            for d in docs1:
-                subgraph.add_node(d["id"], d["title"], "Document", p1_co, {"url": d.get("url")})
-                subgraph.add_edge(p1_id, d["id"], "DERIVED_FROM")
-            for d in docs2:
-                subgraph.add_node(d["id"], d["title"], "Document", p2_co, {"url": d.get("url")})
-                subgraph.add_edge(p2_id, d["id"], "DERIVED_FROM")
+            d1 = item.get("source_doc_a") or {}
+            d2 = item.get("source_doc_b") or {}
 
-            d1_title = d1.get("title") or p1_src
+            for d in item.get("all_docs_a", []):
+                subgraph.add_node(d["id"], d["title"], "Document", p1["company"], {"url": d.get("url")})
+                subgraph.add_edge(p1["id"], d["id"], "DERIVED_FROM")
+            for d in item.get("all_docs_b", []):
+                subgraph.add_node(d["id"], d["title"], "Document", p2["company"], {"url": d.get("url")})
+                subgraph.add_edge(p2["id"], d["id"], "DERIVED_FROM")
+
+            d1_title = d1.get("title") or "FinPay Document"
             d1_url = d1.get("url") or "#"
-            d2_title = d2.get("title") or p2_src
+            d2_title = d2.get("title") or "Vaultly Document"
             d2_url = d2.get("url") or "#"
 
-            text_lines.append(
-                f"#### Conflict #{idx}: {p1_name} vs. {p2_name} `[{sev}]`\n"
-                f"- **Domain**: `{p1_domain}`\n"
-                f"- **{p1_co} Rule** ({p1_eff}, {p1_auth}): *\"{p1_desc}\"*\n"
-                f"  - Source Document: [{d1_title}]({d1_url})\n"
-                f"- **{p2_co} Rule** ({p2_eff}, {p2_auth}): *\"{p2_desc}\"*\n"
-                f"  - Source Document: [{d2_title}]({d2_url})\n"
-                f"- **Conflict Reason**: {reason}\n"
-            )
+            line_entry = [
+                f"#### Conflict #{idx}: {p1['name']} vs. {p2['name']} `[{sev}]`",
+                f"- **Domain**: `{item['domain']}`",
+                f"- **Contradiction Type**: `{c_type}` (`{status}`)",
+                f"- **{p1['company']} Rule** ({p1.get('date')}, {p1.get('authority')}): *\"{p1.get('desc')}\"*",
+                f"  - Source Document: [{d1_title}]({d1_url})",
+                f"- **{p2['company']} Rule** ({p2.get('date')}, {p2.get('authority')}): *\"{p2.get('desc')}\"*",
+                f"  - Source Document: [{d2_title}]({d2_url})",
+                f"- **Conflict Reason**: {reason}",
+            ]
+            if auth_assess:
+                line_entry.append(f"- **Authority & Risk Assessment**: {auth_assess}")
+            line_entry.append("")
+            text_lines.append("\n".join(line_entry))
 
         return ToolResult(
             tool_name="detect_policy_conflicts",

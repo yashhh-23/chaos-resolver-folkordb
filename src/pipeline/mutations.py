@@ -9,6 +9,7 @@ Executes transactional Cypher MERGE, SET, and DELETE operations in FalkorDB to:
 
 from typing import Dict, Any, List, Optional
 from datetime import datetime
+import re
 from src.config import settings
 from src.utils.logger import logger
 from src.db.client import db_client
@@ -306,67 +307,173 @@ class LiveMutationEngine:
         team_b_id: str = "vaultly:team:identity_growth",
         unified_name: str = "Unified M&A Security & Identity Team",
     ) -> Dict[str, Any]:
-        """Merges two distinct departmental teams into a unified joint team in FalkorDB."""
+        """Merges two distinct departmental teams into a unified joint team in FalkorDB with full history preservation."""
+        if not team_a_id or not team_b_id:
+            raise ValueError("Precondition failed: Both team_a_id and team_b_id must be provided.")
+
+        t1_clean = team_a_id.strip()
+        t2_clean = team_b_id.strip()
+        if t1_clean == t2_clean:
+            raise ValueError(f"Precondition failed: Cannot merge team '{t1_clean}' into itself.")
+
         graph = self._get_graph()
         now_ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         subgraph = Subgraph()
-        unified_id = "unified:team:identity_secarch"
+
+        # Step 0: Precondition Check - Validate existence, status, and consolidation eligibility
+        precondition_query = """
+            MATCH (t:Team)
+            WHERE t.id IN [$t1_id, $t2_id]
+            RETURN t.id, coalesce(t.name, t.id) as name, coalesce(t.company_origin, 'Unknown') as company_origin,
+                   coalesce(t.status, 'ACTIVE') as status, t.merged_into as merged_into
+        """
+        pre_res = graph.query(precondition_query, {"t1_id": t1_clean, "t2_id": t2_clean})
+        found_teams = {
+            row[0]: {
+                "name": row[1],
+                "company": row[2],
+                "status": row[3],
+                "merged_into": row[4],
+            }
+            for row in (pre_res.result_set or [])
+        }
+
+        missing_teams = [tid for tid in [t1_clean, t2_clean] if tid not in found_teams]
+        if missing_teams:
+            raise ValueError(
+                f"Precondition failed: Source team(s) {missing_teams} do not exist in graph '{self.graph_name}'."
+            )
+
+        # Dynamic Unified Team ID assignment (preserving backwards compatibility for standard secarch / identity_growth pair)
+        if {t1_clean, t2_clean} == {"finpay:team:secarch", "vaultly:team:identity_growth"}:
+            unified_id = "unified:team:identity_secarch"
+        else:
+            slug1 = re.sub(r'[^a-zA-Z0-9_]', '_', t1_clean.split(":")[-1])
+            slug2 = re.sub(r'[^a-zA-Z0-9_]', '_', t2_clean.split(":")[-1])
+            unified_id = f"unified:team:{'_'.join(sorted([slug1, slug2]))}"
+
+        for tid in [t1_clean, t2_clean]:
+            t_data = found_teams[tid]
+            if t_data["status"] == "MERGED" and t_data.get("merged_into") != unified_id:
+                raise ValueError(
+                    f"Precondition failed: Team '{tid}' is already merged into '{t_data.get('merged_into')}'."
+                )
+
+        charter = (
+            f"Consolidated joint engineering & operations charter spanning "
+            f"{found_teams[t1_clean]['name']} ({found_teams[t1_clean]['company']}) and "
+            f"{found_teams[t2_clean]['name']} ({found_teams[t2_clean]['company']})."
+        )
 
         # Step 1: Create or update Unified Team node
         merge_team_query = """
             MERGE (ut:Team {id: $u_id})
             ON CREATE SET
                 ut.name = $u_name,
-                ut.charter = 'Consolidated Identity, Access Management, and PCI-DSS Compliance across FinPay and Vaultly',
+                ut.charter = $charter,
                 ut.company_origin = 'Unified',
                 ut.status = 'ACTIVE',
                 ut.merged_at = $timestamp
             ON MATCH SET
                 ut.name = $u_name,
-                ut.charter = 'Consolidated Identity, Access Management, and PCI-DSS Compliance across FinPay and Vaultly',
+                ut.charter = $charter,
                 ut.company_origin = 'Unified',
                 ut.status = 'ACTIVE',
                 ut.merged_at = $timestamp
         """
-        graph.query(merge_team_query, {"u_id": unified_id, "u_name": unified_name, "timestamp": now_ts})
+        graph.query(merge_team_query, {
+            "u_id": unified_id,
+            "u_name": unified_name,
+            "charter": charter,
+            "timestamp": now_ts,
+        })
 
-        # Step 2: Migrate team members to unified team and delete old membership edges
+        # Step 2: Record historical members and systems on deprecated teams before edge migration
+        archive_history_query = """
+            MATCH (t:Team)
+            WHERE t.id IN [$t1_id, $t2_id]
+            OPTIONAL MATCH (p:Person)-[:MEMBER_OF]->(t)
+            OPTIONAL MATCH (t)-[:OWNS]->(s:System)
+            WITH t, collect(DISTINCT coalesce(p.name, p.id)) as members,
+                 collect(DISTINCT coalesce(s.name, s.id)) as systems
+            SET t.status = 'MERGED',
+                t.merged_into = $u_id,
+                t.merged_at = $timestamp,
+                t.historical_members = members,
+                t.historical_systems = systems
+        """
+        graph.query(archive_history_query, {
+            "u_id": unified_id,
+            "t1_id": t1_clean,
+            "t2_id": t2_clean,
+            "timestamp": now_ts,
+        })
+
+        # Step 3: Migrate team members to unified team with lineage and delete old active edges
         migrate_members_query = """
             MATCH (ut:Team {id: $u_id})
             MATCH (p:Person)-[r:MEMBER_OF]->(t:Team)
             WHERE t.id IN [$t1_id, $t2_id]
-            MERGE (p)-[:MEMBER_OF]->(ut)
+            MERGE (p)-[nr:MEMBER_OF]->(ut)
+            ON CREATE SET nr.status = 'ACTIVE', nr.assigned_at = $timestamp, nr.former_team = t.id
             DELETE r
         """
-        graph.query(migrate_members_query, {"u_id": unified_id, "t1_id": team_a_id, "t2_id": team_b_id})
+        graph.query(migrate_members_query, {
+            "u_id": unified_id,
+            "t1_id": t1_clean,
+            "t2_id": t2_clean,
+            "timestamp": now_ts,
+        })
 
-        # Step 3: Migrate system ownership to unified team and delete old ownership edges
+        # Step 4: Migrate system ownership to unified team with lineage and delete old active edges
         migrate_ownership_query = """
             MATCH (ut:Team {id: $u_id})
             MATCH (t:Team)-[r:OWNS]->(s:System)
             WHERE t.id IN [$t1_id, $t2_id]
-            MERGE (ut)-[:OWNS]->(s)
+            MERGE (ut)-[no:OWNS]->(s)
+            ON CREATE SET no.status = 'ACTIVE', no.assigned_at = $timestamp, no.former_team = t.id
             DELETE r
         """
-        graph.query(migrate_ownership_query, {"u_id": unified_id, "t1_id": team_a_id, "t2_id": team_b_id})
+        graph.query(migrate_ownership_query, {
+            "u_id": unified_id,
+            "t1_id": t1_clean,
+            "t2_id": t2_clean,
+            "timestamp": now_ts,
+        })
 
-        # Step 4: Mark old teams as MERGED and establish SUPERSEDES relationship
+        # Step 5: Establish explicit SUPERSEDES consolidation lineage with audit metadata
         deprecate_teams_query = """
             MATCH (ut:Team {id: $u_id})
             MATCH (t:Team)
             WHERE t.id IN [$t1_id, $t2_id]
-            SET t.status = 'MERGED',
-                t.merged_into = $u_id,
-                t.merged_at = $timestamp
-            MERGE (ut)-[:SUPERSEDES]->(t)
+            MERGE (ut)-[s:SUPERSEDES]->(t)
+            ON CREATE SET s.at = $timestamp, s.type = 'TEAM_CONSOLIDATION'
+            ON MATCH SET s.at = $timestamp, s.type = 'TEAM_CONSOLIDATION'
         """
-        graph.query(deprecate_teams_query, {"u_id": unified_id, "t1_id": team_a_id, "t2_id": team_b_id, "timestamp": now_ts})
+        graph.query(deprecate_teams_query, {
+            "u_id": unified_id,
+            "t1_id": t1_clean,
+            "t2_id": t2_clean,
+            "timestamp": now_ts,
+        })
+
+        # Step 6: Post-mutation verification - Ensure unified team exists and graph reached consistent state
+        verify_query = """
+            MATCH (ut:Team {id: $u_id})
+            OPTIONAL MATCH (p:Person)-[r:MEMBER_OF]->(ut)
+            OPTIONAL MATCH (ut)-[o:OWNS]->(s:System)
+            RETURN ut.status, count(DISTINCT p) as member_count, count(DISTINCT s) as system_count
+        """
+        v_res = graph.query(verify_query, {"u_id": unified_id})
+        if not v_res.result_set or v_res.result_set[0][0] != "ACTIVE":
+            raise RuntimeError(f"Post-mutation verification failed: Unified team '{unified_id}' was not created.")
 
         subgraph.add_node(unified_id, unified_name, "Team", "Unified", {"status": "ACTIVE"})
 
         # Query actual team members dynamically from FalkorDB under unified team
         members_query = """
-            MATCH (p:Person)-[:MEMBER_OF]->(ut:Team {id: $u_id})
+            MATCH (p:Person)-[r:MEMBER_OF]->(ut:Team {id: $u_id})
+            WHERE coalesce(r.status, 'ACTIVE') = 'ACTIVE'
             RETURN DISTINCT p.id, p.name, p.company_origin
         """
         members_res = graph.query(members_query, {"u_id": unified_id})
@@ -376,39 +483,42 @@ class LiveMutationEngine:
             for row in members_res.result_set:
                 p_id, p_name, p_co = row[0], row[1], row[2]
                 subgraph.add_node(p_id, p_name, "Person", p_co or "Unified")
-                subgraph.add_edge(p_id, unified_id, "MEMBER_OF")
+                subgraph.add_edge(p_id, unified_id, "MEMBER_OF", {"status": "ACTIVE"})
                 found_members.append(p_name)
         else:
             # Fallback if called before seeding
             subgraph.add_node("finpay:person:aarav_mehta", "Aarav Mehta", "Person", "FinPay")
             subgraph.add_node("vaultly:person:diya_nair", "Diya Nair", "Person", "Vaultly")
-            subgraph.add_edge("finpay:person:aarav_mehta", unified_id, "MEMBER_OF")
-            subgraph.add_edge("vaultly:person:diya_nair", unified_id, "MEMBER_OF")
+            subgraph.add_edge("finpay:person:aarav_mehta", unified_id, "MEMBER_OF", {"status": "ACTIVE"})
+            subgraph.add_edge("vaultly:person:diya_nair", unified_id, "MEMBER_OF", {"status": "ACTIVE"})
             found_members = ["Aarav Mehta", "Diya Nair"]
 
         # Add owned systems and superseded teams to subgraph
         owned_systems_query = """
-            MATCH (ut:Team {id: $u_id})-[:OWNS]->(s:System)
+            MATCH (ut:Team {id: $u_id})-[r:OWNS]->(s:System)
+            WHERE coalesce(r.status, 'ACTIVE') = 'ACTIVE'
             RETURN DISTINCT s.id, coalesce(s.name, s.id), s.company_origin
         """
         sys_res = graph.query(owned_systems_query, {"u_id": unified_id})
+        found_systems = []
         for row in (sys_res.result_set or []):
             subgraph.add_node(row[0], row[1], "System", row[2] or "Unified")
-            subgraph.add_edge(unified_id, row[0], "OWNS")
+            subgraph.add_edge(unified_id, row[0], "OWNS", {"status": "ACTIVE"})
+            found_systems.append(row[1])
 
         old_teams_query = """
             MATCH (t:Team)
             WHERE t.id IN [$t1_id, $t2_id]
             RETURN t.id, coalesce(t.name, t.id), t.company_origin
         """
-        old_teams_res = graph.query(old_teams_query, {"t1_id": team_a_id, "t2_id": team_b_id})
+        old_teams_res = graph.query(old_teams_query, {"t1_id": t1_clean, "t2_id": t2_clean})
         for row in (old_teams_res.result_set or []):
             subgraph.add_node(row[0], row[1], "Team", row[2] or "Unified", {"status": "MERGED"})
-            subgraph.add_edge(unified_id, row[0], "SUPERSEDES")
+            subgraph.add_edge(unified_id, row[0], "SUPERSEDES", {"type": "TEAM_CONSOLIDATION"})
 
         logger.info(
-            f"[{self.graph_name}] Live Mutation: Merged teams {team_a_id} and {team_b_id} "
-            f"into {unified_id} ({len(found_members)} members)."
+            f"[{self.graph_name}] Live Mutation: Successfully merged teams {t1_clean} and {t2_clean} "
+            f"into {unified_id} ({len(found_members)} members, {len(found_systems)} systems, history preserved)."
         )
 
         return {
@@ -417,10 +527,15 @@ class LiveMutationEngine:
             "timestamp": now_ts,
             "unified_team_id": unified_id,
             "unified_team_name": unified_name,
+            "source_teams": [t1_clean, t2_clean],
             "members": found_members,
+            "systems": found_systems,
+            "history_preserved": True,
+            "preconditions_verified": True,
             "resolution_summary": (
-                f"Successfully unified Security Architecture (FinPay) and Identity Growth (Vaultly) into '{unified_name}'. "
-                f"Consolidated team members ({', '.join(found_members)}) and re-aligned core system ownership under the joint engineering organization."
+                f"Consolidated '{found_teams[t1_clean]['name']}' and '{found_teams[t2_clean]['name']}' "
+                f"into unified team '{unified_name}' ({unified_id}). Migrated {len(found_members)} member(s) "
+                f"and {len(found_systems)} system(s) with full historical provenance preserved in FalkorDB."
             ),
             "subgraph": subgraph.model_dump(),
         }

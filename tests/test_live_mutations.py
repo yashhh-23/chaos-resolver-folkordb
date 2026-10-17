@@ -127,3 +127,136 @@ def test_reset_demo(mutation_engine):
     for node in res["subgraph"]["nodes"]:
         assert "embedding" not in node["properties"], f"Node {node['id']} should not contain embedding payload"
 
+
+def test_merge_teams_input_validation_and_preconditions(mutation_engine):
+    """Verifies B3: Precondition validation, history preservation, and dynamic IDs in team merges."""
+    # 1. Missing team should raise ValueError
+    with pytest.raises(ValueError, match="do not exist"):
+        mutation_engine.merge_teams(
+            team_a_id="finpay:team:non_existent",
+            team_b_id="vaultly:team:identity_growth",
+        )
+
+    # 2. Merging a team into itself should raise ValueError
+    with pytest.raises(ValueError, match="Cannot merge team.*into itself"):
+        mutation_engine.merge_teams(
+            team_a_id="finpay:team:secarch",
+            team_b_id="finpay:team:secarch",
+        )
+
+    # 3. Dynamic team ID generation for custom teams
+    res_custom = mutation_engine.merge_teams(
+        team_a_id="finpay:team:payments_core",
+        team_b_id="vaultly:team:ledger_eng",
+        unified_name="Unified Core Payments & Ledger Team",
+    )
+    assert res_custom["status"] == "success"
+    assert res_custom["unified_team_id"] == "unified:team:ledger_eng_payments_core"
+    assert "payments_core" in res_custom["source_teams"][0] or "payments_core" in res_custom["source_teams"][1]
+
+    # Verify history preservation on the deprecated team node
+    graph = db_client.get_graph(settings.graph_merged)
+    q_hist = """
+        MATCH (t:Team {id: 'finpay:team:payments_core'})
+        RETURN t.status, t.merged_into, t.historical_members
+    """
+    hist_rec = graph.query(q_hist).result_set
+    assert len(hist_rec) > 0
+    assert hist_rec[0][0] == "MERGED"
+    assert hist_rec[0][1] == "unified:team:ledger_eng_payments_core"
+    assert isinstance(hist_rec[0][2], list)
+
+    # 4. Attempting to merge an already-merged team into a different team must fail preconditions
+    with pytest.raises(ValueError, match="already merged into"):
+        mutation_engine.merge_teams(
+            team_a_id="finpay:team:payments_core",
+            team_b_id="vaultly:team:app_experience",
+        )
+
+
+def test_policy_contradiction_validation_engine():
+    """Verifies B4: 3-stage policy contradiction validation with quantitative proof & authority weighting."""
+    from src.pipeline.policy_validator import policy_contradiction_engine
+    from src.tools.graph_tools import GraphAgentTools
+
+    # Test 1: Concrete TTL contradiction (15m vs 7d)
+    auth_a = {
+        "id": "test:pol:auth_a",
+        "name": "Strict Session Policy",
+        "domain": "Authentication",
+        "description": "Ephemeral tokens capped at 900 seconds. PCI-DSS Requirement 8.2.",
+        "authority_level": "CISO",
+        "company_origin": "FinPay",
+    }
+    auth_b = {
+        "id": "test:pol:auth_b",
+        "name": "Frictionless Session Policy",
+        "domain": "Authentication",
+        "description": "Mobile refresh tokens persist up to 7 days with biometric re-auth.",
+        "authority_level": "Head of Product",
+        "company_origin": "Vaultly",
+    }
+    val_auth = policy_contradiction_engine.validate_contradiction(auth_a, auth_b)
+    assert val_auth is not None
+    assert val_auth["is_contradiction"] is True
+    assert val_auth["contradiction_type"] == "TOKEN_LIFECYCLE_TTL_CONTRADICTION"
+    assert val_auth["review_status"] == "CONFIRMED_CONTRADICTION"
+    assert val_auth["severity"] == "CRITICAL"
+    assert "672x" in val_auth["concrete_proof"]
+    assert val_auth["confidence"] >= 0.95
+
+    # Test 2: Concrete Retention contradiction (30d purge vs 180d forensic audit)
+    ret_a = {
+        "id": "test:pol:ret_a",
+        "name": "Data Minimization",
+        "domain": "Data Retention",
+        "description": "Purge all access logs and telemetry after 30 days.",
+        "authority_level": "VP Compliance",
+        "company_origin": "FinPay",
+    }
+    ret_b = {
+        "id": "test:pol:ret_b",
+        "name": "Forensic Audit Retention",
+        "domain": "Data Retention",
+        "description": "Audit trails and transactional logs must be retained for at least 180 days for banking audits.",
+        "authority_level": "Head of Security",
+        "company_origin": "Vaultly",
+    }
+    val_ret = policy_contradiction_engine.validate_contradiction(ret_a, ret_b)
+    assert val_ret is not None
+    assert val_ret["is_contradiction"] is True
+    assert val_ret["contradiction_type"] == "DATA_RETENTION_HORIZON_INCOMPATIBILITY"
+    assert val_ret["review_status"] == "CONFIRMED_CONTRADICTION"
+    assert val_ret["severity"] in ["CRITICAL", "HIGH"]
+
+    # Test 3: Compatible non-contradictory policies sharing the same domain
+    comp_a = {
+        "id": "test:pol:comp_a",
+        "name": "MFA Standard",
+        "domain": "Authentication",
+        "description": "Enforce WebAuthn FIDO2 biometric authentication on all privileged access.",
+        "authority_level": "Security Lead",
+        "company_origin": "FinPay",
+    }
+    comp_b = {
+        "id": "test:pol:comp_b",
+        "name": "Hardware Token Policy",
+        "domain": "Authentication",
+        "description": "Require WebAuthn hardware security keys for internal identity access.",
+        "authority_level": "Head of Security",
+        "company_origin": "Vaultly",
+    }
+    val_comp = policy_contradiction_engine.validate_contradiction(comp_a, comp_b)
+    # Since both enforce WebAuthn without opposing TTLs or opposing directives, they are compatible!
+    assert val_comp is None
+
+    # Test 4: Tool output contains contradiction types and authority assessments
+    tools = GraphAgentTools(graph_name=settings.graph_merged)
+    res = tools.detect_policy_conflicts()
+    if res.details["conflicts"]:
+        first = res.details["conflicts"][0]
+        assert "contradiction_type" in first
+        assert "review_status" in first
+        assert "authority_assessment" in first
+        assert "Contradiction Type" in res.text_answer
+

@@ -294,6 +294,9 @@ def merge_teams(req: Optional[MergeTeamsRequest] = Body(default=None)):
                 unified_name=req.unified_name,
             )
         return engine.merge_teams()
+    except ValueError as ve:
+        logger.warning(f"Validation error in merge_teams: {ve}")
+        raise HTTPException(status_code=400, detail=str(ve))
     except HTTPException:
         raise
     except Exception as e:

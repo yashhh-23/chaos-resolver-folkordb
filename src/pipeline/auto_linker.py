@@ -230,30 +230,62 @@ class AutoLinkerEngine:
                 is_same_domain = fp_domain and vl_domain and fp_domain.lower() == vl_domain.lower()
 
                 if is_same_domain and sim >= self.threshold:
-                    severity = "CRITICAL" if "auth" in fp_domain.lower() else "HIGH"
-                    reason = f"Domain mismatch in {fp_domain}: '{fp_name}' vs '{vl_name}' (semantic overlap: {sim:.2f})"
+                    from src.pipeline.policy_validator import policy_contradiction_engine
 
-                    merge_query = """
-                        MATCH (a:Policy {id: $src}), (b:Policy {id: $tgt})
-                        MERGE (a)-[r:CONFLICTS_WITH]->(b)
-                        ON CREATE SET r.severity = $sev, r.domain = $domain, r.reason = $reason, r.auto_detected = true
-                        ON MATCH SET r.severity = $sev, r.domain = $domain, r.reason = $reason, r.auto_detected = true
-                    """
-                    graph.query(
-                        merge_query,
-                        {"src": fp_id, "tgt": vl_id, "sev": severity, "domain": fp_domain, "reason": reason},
+                    # Stage 2: Independently validate contradictions instead of assuming similarity implies conflict
+                    validation = policy_contradiction_engine.validate_contradiction(
+                        pol_a={
+                            "id": fp_id, "name": fp_name, "domain": fp_domain,
+                            "description": fp_desc, "source": fp_src, "company_origin": company_a,
+                        },
+                        pol_b={
+                            "id": vl_id, "name": vl_name, "domain": vl_domain,
+                            "description": vl_info.get("desc", ""), "source": vl_info.get("source", ""), "company_origin": company_b,
+                        },
                     )
 
-                    conflicts.append({
-                        "source": fp_id,
-                        "source_name": fp_name,
-                        "target": vl_id,
-                        "target_name": vl_name,
-                        "domain": fp_domain,
-                        "severity": severity,
-                        "reason": reason,
-                    })
-                    logger.info(f"[{graph_name}] Linked policy conflict: {fp_name} <-> {vl_name} ({severity})")
+                    # Only link when a genuine contradiction is confirmed
+                    if validation and validation.get("is_contradiction"):
+                        severity = validation["severity"]
+                        reason = validation["reason"]
+                        c_type = validation.get("contradiction_type", "POLICY_CONTRADICTION")
+                        status = validation.get("review_status", "CONFIRMED_CONTRADICTION")
+                        conf = validation.get("confidence", 0.9)
+                        auth_assess = validation.get("authority_assessment", "")
+
+                        merge_query = """
+                            MATCH (a:Policy {id: $src}), (b:Policy {id: $tgt})
+                            MERGE (a)-[r:CONFLICTS_WITH]->(b)
+                            ON CREATE SET r.severity = $sev, r.domain = $domain, r.reason = $reason,
+                                          r.contradiction_type = $c_type, r.review_status = $status,
+                                          r.confidence = $conf, r.authority_assessment = $auth_assess,
+                                          r.auto_detected = true
+                            ON MATCH SET r.severity = $sev, r.domain = $domain, r.reason = $reason,
+                                         r.contradiction_type = $c_type, r.review_status = $status,
+                                         r.confidence = $conf, r.authority_assessment = $auth_assess,
+                                         r.auto_detected = true
+                        """
+                        graph.query(
+                            merge_query,
+                            {
+                                "src": fp_id, "tgt": vl_id, "sev": severity, "domain": fp_domain,
+                                "reason": reason, "c_type": c_type, "status": status,
+                                "conf": conf, "auth_assess": auth_assess,
+                            },
+                        )
+
+                        conflicts.append({
+                            "source": fp_id,
+                            "source_name": fp_name,
+                            "target": vl_id,
+                            "target_name": vl_name,
+                            "domain": fp_domain,
+                            "severity": severity,
+                            "reason": reason,
+                            "contradiction_type": c_type,
+                            "review_status": status,
+                        })
+                        logger.info(f"[{graph_name}] Linked policy conflict: {fp_name} <-> {vl_name} ({severity})")
 
         return conflicts
 
