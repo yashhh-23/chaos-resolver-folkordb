@@ -13,10 +13,104 @@ Every tool returns:
 - A structured Subgraph JSON (nodes and edges traversed) for UI visualization
 """
 
-from typing import List, Dict, Any, Optional, Set
+from typing import List, Dict, Any, Optional, Set, Tuple
 from pydantic import BaseModel, Field
 from src.config import settings
 from src.db.client import db_client
+from src.utils.logger import logger
+
+
+def resolve_entity(
+    graph,
+    label: str,
+    identifier: str,
+) -> Tuple[Optional[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
+    """Deterministically resolves an entity identifier (namespaced ID or name) to a single node.
+
+    Resolution hierarchy:
+    1. Exact ID match (case-insensitive): `toLower(n.id) == ident_lower`
+    2. Exact Name match (case-insensitive): `toLower(n.name) == ident_lower`
+    3. Unique Partial match (substring in name or ID). If multiple match, returns ambiguity.
+
+    Returns:
+        (resolved_node, ambiguous_candidates)
+        - (node, None): Successfully and uniquely resolved.
+        - (None, candidates): Ambiguous match with >= 2 candidates.
+        - (None, []): No matching entity found.
+    """
+    raw = (identifier or "").strip()
+    if not raw:
+        return None, []
+
+    ident_lower = raw.lower()
+
+    allowed_labels = {"Person", "System", "Team", "Policy", "Decision", "Document", "Ticket"}
+    if label not in allowed_labels:
+        raise ValueError(f"Unsupported entity label for resolution: {label}")
+
+    query = f"""
+        MATCH (n:{label})
+        WHERE toLower(n.id) = toLower($ident)
+           OR toLower(n.name) = toLower($ident)
+           OR toLower(n.id) CONTAINS toLower($ident)
+           OR toLower(n.name) CONTAINS toLower($ident)
+        RETURN n.id as id,
+               coalesce(n.name, n.id) as name,
+               coalesce(n.company_origin, 'Unknown') as company_origin,
+               coalesce(n.role, '') as role,
+               coalesce(n.domain, '') as domain,
+               coalesce(n.tech, '') as tech
+    """
+    try:
+        res = graph.query(query, {"ident": raw})
+        records = res.result_set or []
+    except Exception as e:
+        logger.error(f"Error resolving entity {label} with '{raw}': {e}")
+        return None, []
+
+    candidates = [
+        {
+            "id": r[0],
+            "name": r[1],
+            "company_origin": r[2],
+            "role": r[3],
+            "domain": r[4],
+            "tech": r[5],
+        }
+        for r in records
+    ]
+
+    if not candidates:
+        return None, []
+
+    # Priority 1: Exact ID match (case-insensitive)
+    exact_id = [c for c in candidates if c["id"].lower() == ident_lower]
+    if len(exact_id) == 1:
+        return exact_id[0], None
+    elif len(exact_id) > 1:
+        sorted_exact_id = sorted(exact_id, key=lambda x: (x.get("company_origin", ""), x.get("id", "")))
+        return None, sorted_exact_id
+
+    # Priority 2: Exact Name match (case-insensitive)
+    exact_name = [c for c in candidates if c["name"].lower() == ident_lower]
+    if len(exact_name) == 1:
+        return exact_name[0], None
+    elif len(exact_name) > 1:
+        sorted_exact = sorted(exact_name, key=lambda x: (x.get("company_origin", ""), x.get("id", "")))
+        return None, sorted_exact
+
+    # Priority 3: Partial substring matches
+    partial = [
+        c for c in candidates
+        if ident_lower in c["name"].lower() or ident_lower in c["id"].lower()
+    ]
+    if len(partial) == 1:
+        return partial[0], None
+    elif len(partial) > 1:
+        sorted_partial = sorted(partial, key=lambda x: (x.get("name", ""), x.get("company_origin", ""), x.get("id", "")))
+        return None, sorted_partial
+
+    return None, []
 
 
 class SubgraphNode(BaseModel):
@@ -78,6 +172,14 @@ class GraphAgentTools:
 
     def _get_graph(self):
         return db_client.get_graph(self.graph_name)
+
+    def resolve_entity(
+        self,
+        label: str,
+        identifier: str,
+    ) -> Tuple[Optional[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
+        """Resolves an entity identifier to a unique node or returns ambiguous candidates."""
+        return resolve_entity(self._get_graph(), label, identifier)
 
     def find_counterpart_expert(self, topic: str, company: str = "Vaultly") -> ToolResult:
         """Identifies the actual subject-matter experts in the specified company
@@ -370,10 +472,41 @@ class GraphAgentTools:
         graph = self._get_graph()
         subgraph = Subgraph()
 
+        resolved_sys, ambiguous = self.resolve_entity(label="System", identifier=system_name)
+        if ambiguous:
+            lines = [
+                f"### Ambiguous System Query: '{system_name}'\n",
+                "Multiple systems matched your input. Please disambiguate by providing an exact namespaced ID or exact name:\n",
+            ]
+            for idx, cand in enumerate(ambiguous, 1):
+                lines.append(
+                    f"{idx}. **{cand['name']}** (ID: `{cand['id']}`, Tenant: `{cand.get('company_origin', 'Unknown')}`, Domain: `{cand.get('domain', 'N/A')}`)"
+                )
+            return ToolResult(
+                tool_name="trace_decision_lineage",
+                status="ambiguous",
+                text_answer="\n".join(lines),
+                details={
+                    "system_input": system_name,
+                    "matched_count": len(ambiguous),
+                    "candidates": ambiguous,
+                },
+                subgraph=subgraph,
+            )
+
+        if not resolved_sys:
+            return ToolResult(
+                tool_name="trace_decision_lineage",
+                status="not_found",
+                text_answer=f"System '{system_name}' was not found in the graph.",
+                details={"system_input": system_name},
+                subgraph=subgraph,
+            )
+
+        target_system_id = resolved_sys["id"]
+
         query = """
-            MATCH (s:System)
-            WHERE toLower(s.name) = toLower($name) OR toLower(s.id) CONTAINS toLower($name)
-            WITH s LIMIT 1
+            MATCH (s:System {id: $sys_id})
             OPTIONAL MATCH (s)-[:GOVERNED_BY]->(d:Decision)
             OPTIONAL MATCH (d)-[r_conf:CONFLICTS_WITH]-(dc:Decision)
             OPTIONAL MATCH (d)-[:DERIVED_FROM]->(doc:Document)
@@ -387,13 +520,14 @@ class GraphAgentTools:
                    collect(DISTINCT {id: tkt.id, title: tkt.title, external_id: tkt.external_id}) as tkts,
                    collect(DISTINCT {id: cdoc.id, title: cdoc.title, url: cdoc.url}) as cdocs
         """
-        res = graph.query(query, {"name": system_name})
+        res = graph.query(query, {"sys_id": target_system_id})
 
         if not res.result_set:
             return ToolResult(
                 tool_name="trace_decision_lineage",
-                text_answer=f"System '{system_name}' was not found in the graph.",
-                details={},
+                status="not_found",
+                text_answer=f"System '{system_name}' ({target_system_id}) was not found in the graph.",
+                details={"system_input": system_name, "system_id": target_system_id},
                 subgraph=subgraph,
             )
 
@@ -514,25 +648,82 @@ class GraphAgentTools:
         return ToolResult(
             tool_name="trace_decision_lineage",
             text_answer="\n".join(text_lines),
-            details={"system": s_name, "company": s_co},
+            details={"system": s_name, "company": s_co, "system_id": s_id},
             subgraph=subgraph,
         )
 
     def get_warm_intro_path(self, person_a: str, person_b: str) -> ToolResult:
-        """Finds the fastest warm-introduction or dependency chain between two engineers
+        """Finds the shortest topological graph path between two engineers
         across company borders using native shortestPath traversal with bounded fallback.
         """
         graph = self._get_graph()
         subgraph = Subgraph()
 
+        node_a, amb_a = self.resolve_entity(label="Person", identifier=person_a)
+        if amb_a:
+            lines = [
+                f"### Ambiguous Person Query: '{person_a}'\n",
+                "Multiple individuals matched your input. Please disambiguate by providing an exact namespaced ID or exact full name:\n",
+            ]
+            for idx, cand in enumerate(amb_a, 1):
+                role_str = f", Role: `{cand['role']}`" if cand.get("role") else ""
+                lines.append(f"{idx}. **{cand['name']}** (ID: `{cand['id']}`, Tenant: `{cand.get('company_origin', 'Unknown')}`{role_str})")
+            return ToolResult(
+                tool_name="get_warm_intro_path",
+                status="ambiguous",
+                text_answer="\n".join(lines),
+                details={"input": person_a, "matched_count": len(amb_a), "candidates": amb_a},
+                subgraph=subgraph,
+            )
+        if not node_a:
+            return ToolResult(
+                tool_name="get_warm_intro_path",
+                status="not_found",
+                text_answer=f"Person '{person_a}' was not found in the graph.",
+                details={"input": person_a},
+                subgraph=subgraph,
+            )
+
+        node_b, amb_b = self.resolve_entity(label="Person", identifier=person_b)
+        if amb_b:
+            lines = [
+                f"### Ambiguous Person Query: '{person_b}'\n",
+                "Multiple individuals matched your input. Please disambiguate by providing an exact namespaced ID or exact full name:\n",
+            ]
+            for idx, cand in enumerate(amb_b, 1):
+                role_str = f", Role: `{cand['role']}`" if cand.get("role") else ""
+                lines.append(f"{idx}. **{cand['name']}** (ID: `{cand['id']}`, Tenant: `{cand.get('company_origin', 'Unknown')}`{role_str})")
+            return ToolResult(
+                tool_name="get_warm_intro_path",
+                status="ambiguous",
+                text_answer="\n".join(lines),
+                details={"input": person_b, "matched_count": len(amb_b), "candidates": amb_b},
+                subgraph=subgraph,
+            )
+        if not node_b:
+            return ToolResult(
+                tool_name="get_warm_intro_path",
+                status="not_found",
+                text_answer=f"Person '{person_b}' was not found in the graph.",
+                details={"input": person_b},
+                subgraph=subgraph,
+            )
+
+        if node_a["id"] == node_b["id"]:
+            subgraph.add_node(node_a["id"], node_a["name"], "Person", node_a.get("company_origin", "Unknown"))
+            return ToolResult(
+                tool_name="get_warm_intro_path",
+                status="same_person",
+                text_answer=f"Both arguments resolve to the same person: **{node_a['name']}** (ID: `{node_a['id']}`). No introduction path required.",
+                details={"person": node_a},
+                subgraph=subgraph,
+            )
+
         res = None
-        # 1. Attempt FalkorDB native shortestPath (for undirected traversals supported by engine)
+        # 1. Attempt FalkorDB native shortestPath with deterministically resolved IDs
         try:
             native_q = f"""
-                MATCH (a:Person), (b:Person)
-                WHERE (toLower(a.name) CONTAINS toLower($p_a) OR toLower(a.id) CONTAINS toLower($p_a))
-                  AND (toLower(b.name) CONTAINS toLower($p_b) OR toLower(b.id) CONTAINS toLower($p_b))
-                WITH a, b LIMIT 1
+                MATCH (a:Person {{id: $p_a_id}}), (b:Person {{id: $p_b_id}})
                 WITH shortestPath((a)-[*..{settings.warm_intro_max_directed_hops}]-(b)) as p
                 WHERE p IS NOT NULL
                 WITH p, nodes(p) as nds, relationships(p) as rls, length(p) as h
@@ -543,19 +734,17 @@ class GraphAgentTools:
                        [r in rls | [startNode(r).id, endNode(r).id, type(r)]] as rel_triplets,
                        h as hops
             """
-            native_res = graph.query(native_q, {"p_a": person_a, "p_b": person_b})
+            native_res = graph.query(native_q, {"p_a_id": node_a["id"], "p_b_id": node_b["id"]})
             if native_res and native_res.result_set:
                 res = native_res
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Native shortestPath query failed: {e}")
             res = None
 
-        # 2. Seamless fallback to bounded bidirectional path match
+        # 2. Seamless fallback to bounded bidirectional path match with deterministically resolved IDs
         if not res or not res.result_set:
             query = f"""
-                MATCH (a:Person) WHERE toLower(a.name) CONTAINS toLower($p_a) OR toLower(a.id) CONTAINS toLower($p_a)
-                WITH a LIMIT 1
-                MATCH (b:Person) WHERE toLower(b.name) CONTAINS toLower($p_b) OR toLower(b.id) CONTAINS toLower($p_b)
-                WITH a, b LIMIT 1
+                MATCH (a:Person {{id: $p_a_id}}), (b:Person {{id: $p_b_id}})
                 MATCH p = (a)-[*1..{settings.warm_intro_max_bidirectional_hops}]-(b)
                 WITH p, nodes(p) as nds, relationships(p) as rls, length(p) as h
                 RETURN [n in nds | n.id] as node_ids,
@@ -567,13 +756,13 @@ class GraphAgentTools:
                 ORDER BY h ASC
                 LIMIT 1
             """
-            res = graph.query(query, {"p_a": person_a, "p_b": person_b})
+            res = graph.query(query, {"p_a_id": node_a["id"], "p_b_id": node_b["id"]})
 
         if not res or not res.result_set:
             return ToolResult(
                 tool_name="get_warm_intro_path",
-                text_answer=f"No connection path found between '{person_a}' and '{person_b}' within 4 hops.",
-                details={},
+                text_answer=f"No connection path found between '{node_a['name']}' ({node_a['id']}) and '{node_b['name']}' ({node_b['id']}) within {settings.warm_intro_max_bidirectional_hops} hops.",
+                details={"resolved_a": node_a, "resolved_b": node_b},
                 subgraph=subgraph,
             )
 
@@ -604,8 +793,8 @@ class GraphAgentTools:
         pitch_context = f"({node_names[1]} and {node_names[-2]})" if len(node_names) > 2 else f"({node_names[1]})"
 
         text_answer = (
-            f"### Warm Introduction Path: **{start_name}** -> **{end_name}** ({hops} Hops)\n\n"
-            f"Fastest organizational bridge discovered across companies:\n\n"
+            f"### Warm Introduction Path: **{start_name}** -> **{end_name}** ({hops} Hops - Shortest Graph Path)\n\n"
+            f"Shortest topological graph path discovered across companies:\n\n"
             + "\n".join(f"{idx+1}. {step}" for idx, step in enumerate(chain_steps))
             + f"\n\n**Recommended Intro Pitch:**\n"
             f"> \"Hi {end_name}, I'm working with {start_name}. We noticed an architecture overlap between our services {pitch_context}, and would love to align on unified patterns.\""
@@ -614,7 +803,15 @@ class GraphAgentTools:
         return ToolResult(
             tool_name="get_warm_intro_path",
             text_answer=text_answer,
-            details={"start": start_name, "end": end_name, "hops": hops, "chain": chain_steps},
+            details={
+                "start": start_name,
+                "end": end_name,
+                "hops": hops,
+                "chain": chain_steps,
+                "path_metric": "shortest_topological_path",
+                "resolved_a": node_a,
+                "resolved_b": node_b,
+            },
             subgraph=subgraph,
         )
 

@@ -203,3 +203,95 @@ def test_tenant_specific_mutations():
     assert finpay_res.json()["status"] == "success"
 
 
+def test_deterministic_entity_resolution_hierarchy():
+    """Verifies that entity resolution prioritizes exact ID, then exact name, and detects ambiguity (B7, B8)."""
+    # 1. Exact ID match (case-insensitive)
+    node, amb = agent_tools.resolve_entity("Person", "FINPAY:PERSON:AARAV_MEHTA")
+    assert amb is None
+    assert node is not None
+    assert node["id"] == "finpay:person:aarav_mehta"
+
+    # 2. Exact Name match (case-insensitive)
+    node_name, amb_name = agent_tools.resolve_entity("Person", "aarav mehta")
+    assert amb_name is None
+    assert node_name is not None
+    assert node_name["id"] == "finpay:person:aarav_mehta"
+
+    # 3. Exact system ID
+    sys_node, sys_amb = agent_tools.resolve_entity("System", "finpay:sys:gatekeeper_auth")
+    assert sys_amb is None
+    assert sys_node is not None
+    assert sys_node["id"] == "finpay:sys:gatekeeper_auth"
+
+    # 4. Nonexistent entity
+    none_node, none_amb = agent_tools.resolve_entity("Person", "Nonexistent_Ghost_User_999")
+    assert none_node is None
+    assert none_amb == []
+
+
+def test_warm_intro_path_ambiguity_and_shortest_path_semantics(monkeypatch):
+    """Verifies that get_warm_intro_path reports shortest graph path semantics and handles ambiguity cleanly (B7)."""
+    # Normal deterministic path
+    res = agent_tools.get_warm_intro_path("finpay:person:aarav_mehta", "vaultly:person:diya_nair")
+    assert res.status == "success"
+    assert "Shortest topological graph path" in res.text_answer
+    assert res.details.get("path_metric") == "shortest_topological_path"
+    assert "resolved_a" in res.details
+    assert "resolved_b" in res.details
+
+    # Same person input
+    same_res = agent_tools.get_warm_intro_path("Aarav Mehta", "finpay:person:aarav_mehta")
+    assert same_res.status == "same_person"
+    assert "No introduction path required" in same_res.text_answer
+
+    # Nonexistent person input
+    nf_res = agent_tools.get_warm_intro_path("Unknown Person 12345", "Diya Nair")
+    assert nf_res.status == "not_found"
+    assert "was not found in the graph" in nf_res.text_answer
+
+    # Ambiguity detection when multiple people match
+    def mock_resolve_ambiguous(self, label, identifier):
+        if "Alex" in identifier:
+            return None, [
+                {"id": "finpay:person:alex_chen", "name": "Alex Chen", "company_origin": "FinPay", "role": "Staff Eng"},
+                {"id": "vaultly:person:alex_kumar", "name": "Alex Kumar", "company_origin": "Vaultly", "role": "Sec Eng"},
+            ]
+        return agent_tools.resolve_entity(label, identifier)
+
+    monkeypatch.setattr(agent_tools, "resolve_entity", mock_resolve_ambiguous.__get__(agent_tools))
+    amb_res = agent_tools.get_warm_intro_path("Alex", "Diya Nair")
+    assert amb_res.status == "ambiguous"
+    assert "Ambiguous Person Query" in amb_res.text_answer
+    assert amb_res.details["matched_count"] == 2
+
+
+def test_trace_decision_lineage_deterministic_system_and_ambiguity(monkeypatch):
+    """Verifies that trace_decision_lineage requires unique system before tracing lineage (B8)."""
+    # Exact ID resolution
+    res_id = agent_tools.trace_decision_lineage("finpay:sys:gatekeeper_auth")
+    assert res_id.status == "success"
+    assert "Decision Lineage" in res_id.text_answer
+    assert res_id.details["system_id"] == "finpay:sys:gatekeeper_auth"
+
+    # Nonexistent system
+    res_nf = agent_tools.trace_decision_lineage("nonexistent_microservice_xyz")
+    assert res_nf.status == "not_found"
+    assert "was not found in the graph" in res_nf.text_answer
+
+    # Ambiguous system
+    def mock_resolve_sys_ambiguous(self, label, identifier):
+        if identifier == "ambiguous_auth":
+            return None, [
+                {"id": "finpay:sys:gatekeeper_auth", "name": "Gatekeeper-Auth", "company_origin": "FinPay", "domain": "Auth"},
+                {"id": "vaultly:sys:pulse_identity", "name": "Pulse-Identity", "company_origin": "Vaultly", "domain": "Auth"},
+            ]
+        return agent_tools.resolve_entity(label, identifier)
+
+    monkeypatch.setattr(agent_tools, "resolve_entity", mock_resolve_sys_ambiguous.__get__(agent_tools))
+    res_amb = agent_tools.trace_decision_lineage("ambiguous_auth")
+    assert res_amb.status == "ambiguous"
+    assert "Ambiguous System Query" in res_amb.text_answer
+    assert res_amb.details["matched_count"] == 2
+
+
+
