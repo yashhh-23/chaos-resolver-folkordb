@@ -147,9 +147,8 @@ class LiveMutationEngine:
             "unified_decision_id": dec_id,
             "resolved_conflict": "FinPay 15-min JWT vs Vaultly 7-day Session",
             "resolution_summary": (
-                f"Created 'Unified M&A Adaptive Session Policy' ({compromise_ttl_minutes}-min JWT with biometric refresh). "
-                "Marked legacy conflicting policies as DEPRECATED. "
-                "Re-governed Gatekeeper-Auth and Pulse-Identity to the unified standard."
+                f"Established 'Unified M&A Adaptive Session Policy' ({compromise_ttl_minutes}-minute session tokens with biometric refresh). "
+                "Deprecated conflicting legacy policies and re-governed Gatekeeper-Auth and Pulse-Identity under the unified security standard."
             ),
             "subgraph": subgraph.model_dump(),
         }
@@ -272,8 +271,8 @@ class LiveMutationEngine:
             "unified_decision_id": dec_id,
             "resolved_conflict": "FinPay 30-day purge vs Vaultly 180-day forensic audit",
             "resolution_summary": (
-                f"Created 'Unified M&A Tiered Log & Audit Retention Policy' ({retention_days}-day encrypted cold storage). "
-                "Marked conflicting policies as DEPRECATED and updated Gateway governance live."
+                f"Enacted 'Unified M&A Tiered Log & Audit Retention Policy' ({retention_days}-day encrypted cold storage for compliance). "
+                "Deprecated conflicting retention policies and unified platform audit logging across both organizations."
             ),
             "subgraph": subgraph.model_dump(),
         }
@@ -397,8 +396,8 @@ class LiveMutationEngine:
             "unified_team_name": unified_name,
             "members": found_members,
             "resolution_summary": (
-                f"Merged '{team_a_id}' and '{team_b_id}' into joint org '{unified_name}'. "
-                f"Consolidated team members ({', '.join(found_members)}) and unified system ownership under FalkorDB."
+                f"Successfully unified Security Architecture (FinPay) and Identity Growth (Vaultly) into '{unified_name}'. "
+                f"Consolidated team members ({', '.join(found_members)}) and re-aligned core system ownership under the joint engineering organization."
             ),
             "subgraph": subgraph.model_dump(),
         }

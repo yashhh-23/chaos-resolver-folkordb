@@ -82,6 +82,22 @@ const EMOJI_TO_SVG: Record<string, string> = {
   "🏝": `<svg class="inline-block w-3.5 h-3.5 text-cyan-400 align-text-bottom mr-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>`,
 };
 
+const TOOL_DISPLAY_NAMES: Record<string, string> = {
+  live_mutation: "Real-Time Alignment",
+  find_counterpart_expert: "Expert Discovery",
+  detect_policy_conflicts: "Policy Conflict Audit",
+  find_redundant_systems: "Redundancy Analysis",
+  trace_decision_lineage: "Decision Lineage",
+  get_warm_intro_path: "Warm Introduction",
+  detect_organizational_silos: "Silo Isolation",
+  schema_constrained_cypher: "Graph Intelligence",
+};
+
+function formatToolBadge(name?: string): string {
+  if (!name) return "";
+  return TOOL_DISPLAY_NAMES[name] || name.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
 function formatInline(str: string): string {
   const codeSpans: string[] = [];
   // 1. Extract inline code spans and replace with placeholder to protect internal asterisks/brackets
@@ -173,7 +189,12 @@ function renderSafeMarkdown(text: string): string {
       let iconSvg = "";
       if (headingText.includes("Welcome to OrgBridge AI") || headingText.includes("Brain")) {
         iconSvg = EMOJI_TO_SVG["🧠"];
-      } else if (headingText.includes("Live Graph Mutation")) {
+      } else if (
+        headingText.includes("Live Graph Mutation") ||
+        headingText.includes("Policy Alignment") ||
+        headingText.includes("Real-Time") ||
+        headingText.includes("Alignment Implemented")
+      ) {
         iconSvg = EMOJI_TO_SVG["⚡"];
       } else if (headingText.includes("Organizational Silo")) {
         iconSvg = `<svg class="inline-block w-4 h-4 text-cyan-400 align-text-bottom mr-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>`;
@@ -384,13 +405,16 @@ export default function ChatPanel({
     }
   };
 
-  const handleLiveMutation = async (action: "resolve-auth" | "resolve-retention" | "merge-teams" | "reset-demo", actionLabel: string) => {
+  const handleLiveMutation = async (
+    action: "resolve-auth" | "resolve-retention" | "merge-teams" | "reset-demo",
+    promptText: string
+  ) => {
     if (isLoading) return;
 
     const userMsg: Message = {
       id: Date.now().toString(),
       sender: "user",
-      text: `[Execute Live Mutation]: ${actionLabel}`,
+      text: promptText,
       timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
     };
 
@@ -400,13 +424,27 @@ export default function ChatPanel({
     try {
       const res = await mutateGraph(action);
       onBackendHealthy?.();
+
+      const actionTitleMap: Record<string, string> = {
+        "resolve-auth": "Authentication Policy Standardization",
+        "resolve_auth_conflict": "Authentication Policy Standardization",
+        "resolve-retention": "Data Retention Harmonization",
+        "resolve_retention_conflict": "Data Retention Harmonization",
+        "merge-teams": "Cross-Company Team Consolidation",
+        "merge_teams": "Cross-Company Team Consolidation",
+        "reset-demo": "Baseline Knowledge Restoration",
+        "reset_demo": "Baseline Knowledge Restoration",
+      };
+
+      const friendlyDecision = actionTitleMap[res.action || action] || "Enterprise Knowledge Alignment";
+
       const agentMsg: Message = {
         id: (Date.now() + 1).toString(),
         sender: "agent",
-        text: `### Live Graph Mutation Executed (Track 03)\n\n` +
-              `**Action**: \`${res.action || action}\`\n\n` +
-              `**Result**: ${res.resolution_summary || res.message}\n\n` +
-              `> *FalkorDB multigraph state updated live via Cypher MERGE/SET. Knowledge is current as of ${res.timestamp || "now"}.*`,
+        text: `### Real-Time Policy Alignment Implemented\n\n` +
+              `**Decision**: ${friendlyDecision}\n\n` +
+              `**Impact**: ${res.resolution_summary || res.message}\n\n` +
+              `> *Enterprise knowledge updated in real-time. Verified as of ${res.timestamp || "now"}.*`,
         toolName: "live_mutation",
         subgraph: res.subgraph,
         timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
@@ -731,47 +769,67 @@ export default function ChatPanel({
         </div>
       </div>
 
-      {/* Live Graph Mutation Controls (Track 03 Hardening) */}
+      {/* Executive Alignment Actions (Track 03 Hardening) */}
       <div className="p-3 bg-slate-950/70 border-b border-slate-800/80">
         <div className="flex items-center justify-between mb-2">
           <p className="text-[11px] font-semibold uppercase tracking-wider text-amber-400 flex items-center gap-1">
             <Zap className="w-3.5 h-3.5 text-amber-400" />
-            Live Brain Mutations (Track 03)
+            Executive Alignment Actions (Track 03)
           </p>
-          <span className="text-[10px] text-slate-500 font-mono">Dynamic Cypher MERGE/SET</span>
+          <span className="text-[10px] text-slate-400">Real-Time Knowledge Updates</span>
         </div>
         <div className="grid grid-cols-2 gap-1.5">
           <button
-            onClick={() => handleLiveMutation("resolve-auth", "Unify 30-min JWT with Biometric Refresh")}
+            onClick={() =>
+              handleLiveMutation(
+                "resolve-auth",
+                "Resolve the authentication policy conflict: standardize on a unified 30-minute session with biometric refresh."
+              )
+            }
             disabled={isLoading}
             className="flex items-center gap-1.5 text-[11px] bg-emerald-950/40 hover:bg-emerald-900/50 text-emerald-300 border border-emerald-700/60 px-2 py-1.5 rounded-md transition disabled:opacity-50 text-left"
           >
             <CheckCircle2 className="w-3 h-3 text-emerald-400 shrink-0" />
-            <span className="truncate">Resolve Auth Conflict</span>
+            <span className="truncate">Standardize Auth Policy</span>
           </button>
           <button
-            onClick={() => handleLiveMutation("resolve-retention", "Adopt 90-Day Tiered Audit Storage")}
+            onClick={() =>
+              handleLiveMutation(
+                "resolve-retention",
+                "Resolve the data retention conflict: enact a unified 90-day tiered cold storage policy across both companies."
+              )
+            }
             disabled={isLoading}
             className="flex items-center gap-1.5 text-[11px] bg-emerald-950/40 hover:bg-emerald-900/50 text-emerald-300 border border-emerald-700/60 px-2 py-1.5 rounded-md transition disabled:opacity-50 text-left"
           >
             <CheckCircle2 className="w-3 h-3 text-emerald-400 shrink-0" />
-            <span className="truncate">Resolve Retention</span>
+            <span className="truncate">Harmonize Log Retention</span>
           </button>
           <button
-            onClick={() => handleLiveMutation("merge-teams", "Merge SecArch and Identity Growth into Unified Org")}
+            onClick={() =>
+              handleLiveMutation(
+                "merge-teams",
+                "Consolidate Security Architecture (FinPay) and Identity Growth (Vaultly) into a unified engineering org."
+              )
+            }
             disabled={isLoading}
             className="flex items-center gap-1.5 text-[11px] bg-indigo-950/40 hover:bg-indigo-900/50 text-indigo-300 border border-indigo-700/60 px-2 py-1.5 rounded-md transition disabled:opacity-50 text-left"
           >
             <GitMerge className="w-3 h-3 text-indigo-400 shrink-0" />
-            <span className="truncate">Merge Sec & Auth</span>
+            <span className="truncate">Consolidate Security Teams</span>
           </button>
           <button
-            onClick={() => handleLiveMutation("reset-demo", "Restore FalkorDB multigraph to initial state")}
+            onClick={() =>
+              handleLiveMutation(
+                "reset-demo",
+                "Restore the knowledge graph to its initial pre-merger baseline."
+              )
+            }
             disabled={isLoading}
             className="flex items-center gap-1.5 text-[11px] bg-slate-800/80 hover:bg-slate-700/80 text-slate-300 border border-slate-700 px-2 py-1.5 rounded-md transition disabled:opacity-50 text-left"
           >
             <RotateCcw className="w-3 h-3 text-amber-400 shrink-0" />
-            <span className="truncate">Reset Demo Graph</span>
+            <span className="truncate">Restore Baseline Graph</span>
           </button>
         </div>
       </div>
@@ -796,8 +854,8 @@ export default function ChatPanel({
                   <Bot className="w-3.5 h-3.5 text-cyan-400" />
                   <span className="font-semibold text-slate-300">OrgBridge Agent</span>
                   {m.toolName && (
-                    <span className="bg-slate-800 text-[10px] text-cyan-300 px-1.5 py-0.5 rounded border border-cyan-800 font-mono">
-                      {m.toolName}
+                    <span className="bg-cyan-950/70 text-[10px] text-cyan-300 px-2 py-0.5 rounded-full border border-cyan-700/60 font-medium tracking-wide">
+                      {formatToolBadge(m.toolName)}
                     </span>
                   )}
                 </>
