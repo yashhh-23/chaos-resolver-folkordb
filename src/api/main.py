@@ -97,6 +97,18 @@ class ChatRequest(BaseModel):
 
 
 # Endpoints
+@app.get("/")
+def root():
+    """Root endpoint providing service metadata, Swagger docs link, and frontend dashboard link."""
+    return {
+        "service": "OrgBridge AI Backend (FalkorDB Multi-Tenant Brain)",
+        "status": "healthy",
+        "documentation": "/docs",
+        "health_check": "/api/health",
+        "frontend_dashboard": "https://falkordb-powered-resolver.vercel.app",
+    }
+
+
 @app.get("/api/health")
 def health_check():
     """System health check and FalkorDB connectivity status."""
