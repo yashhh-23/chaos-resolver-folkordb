@@ -54,4 +54,10 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
+# Deployments & Vercel
+.vercel/
+
+# Cypher Export Artifacts (Generated at runtime by seed script)
+artifacts/cypher/
+
 

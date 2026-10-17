@@ -5,6 +5,7 @@ and merged_brain, viewing schemas, and running M&A graph operations.
 """
 
 import argparse
+import os
 from typing import Optional
 from rich.console import Console
 from rich.table import Table
@@ -162,7 +163,7 @@ def main():
 
     # serve subcommand
     serve_parser = subparsers.add_parser("serve", help="Start FastAPI REST backend server")
-    serve_parser.add_argument("--port", type=int, default=8000, help="Port to bind (default 8000)")
+    serve_parser.add_argument("--port", type=int, default=int(os.environ.get("PORT", 8000)), help="Port to bind (default $PORT or 8000)")
     serve_parser.add_argument("--host", default="0.0.0.0", help="Host interface (default 0.0.0.0)")
 
     # tool subcommand
