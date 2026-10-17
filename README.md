@@ -5,6 +5,15 @@
 
 ---
 
+## 🚀 Live Deployments
+
+- **Live War Room Dashboard**: [https://falkordb-powered-resolver.vercel.app](https://falkordb-powered-resolver.vercel.app)
+- **Live Backend API**: [https://orgbridge-ai-backend.onrender.com](https://orgbridge-ai-backend.onrender.com)
+- **Interactive Swagger Docs**: [https://orgbridge-ai-backend.onrender.com/docs](https://orgbridge-ai-backend.onrender.com/docs)
+- **Backend Health Check**: [https://orgbridge-ai-backend.onrender.com/api/health](https://orgbridge-ai-backend.onrender.com/api/health)
+
+---
+
 ## Architecture & Phase 1 Highlights
 
 During an M&A (e.g., FinPay acquiring Vaultly), organizations face duplicate microservices, conflicting compliance policies, fractured org structures, and tribal knowledge silos. Flat vector RAG fails here because it cannot reason across tenants or evaluate graph paths.
