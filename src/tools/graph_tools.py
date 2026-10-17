@@ -932,9 +932,111 @@ class GraphAgentTools:
                     props=ninfo.get("props", {}),
                 )
 
+    def _find_silo_bridge_recommendation(self, graph, silo: Dict[str, Any]) -> str:
+        """Derives evidence-based integration bridge recommendations from candidate bridge edges,
+        shared dependencies, and reachable counterpart teams (B18).
+        When no evidence supports a bridge, explicitly reports that no suitable bridge was found.
+        """
+        origin_company = silo.get("primary_company")
+        if not origin_company or origin_company not in ("FinPay", "Vaultly"):
+            return "No suitable bridge was found: Component origin is unclassified or external."
+
+        target_company = "Vaultly" if origin_company == "FinPay" else "FinPay"
+        node_ids = silo.get("node_ids", [])
+        if not node_ids:
+            return "No suitable bridge was found: Empty component node set."
+
+        # 1. Check for real candidate or existing bridge edges to the target company
+        try:
+            bridge_query = """
+                MATCH (a)-[r]-(b)
+                WHERE (a.id IN $node_ids AND b.company_origin = $target)
+                   OR (b.id IN $node_ids AND a.company_origin = $target)
+                RETURN coalesce(a.name, a.title, a.id) as a_name,
+                       type(r) as rel_type,
+                       coalesce(b.name, b.title, b.id) as b_name
+                LIMIT 1
+            """
+            b_res = graph.query(bridge_query, {"node_ids": node_ids, "target": target_company}).result_set
+            if b_res and b_res[0]:
+                a_n, r_t, b_n = b_res[0][0], b_res[0][1], b_res[0][2]
+                return f"Candidate Bridge Identified: Establish formal architectural alignment on '{a_n}' <-> '{b_n}' ({r_t})."
+        except Exception as e:
+            logger.debug(f"Bridge edge query error: {e}")
+
+        # 2. Check for shared functional dependencies / shared domain systems in target company
+        try:
+            domain_query = """
+                MATCH (s_silo:System)
+                WHERE s_silo.id IN $node_ids AND s_silo.domain IS NOT NULL
+                MATCH (s_target:System {company_origin: $target})
+                WHERE toLower(s_target.domain) = toLower(s_silo.domain)
+                OPTIONAL MATCH (t_target:Team)-[:OWNS]->(s_target)
+                RETURN s_silo.name, s_silo.domain, s_target.name, coalesce(t_target.name, 'Unassigned Team') as target_team
+                LIMIT 1
+            """
+            d_res = graph.query(domain_query, {"node_ids": node_ids, "target": target_company}).result_set
+            if d_res and d_res[0]:
+                silo_sys, domain, target_sys, target_team = d_res[0][0], d_res[0][1], d_res[0][2], d_res[0][3]
+                silo_teams = ", ".join(silo.get("teams", [])) or "Siloed Engineering"
+                return (
+                    f"Shared Domain Alignment: System '{silo_sys}' shares domain '{domain}' with {target_company}'s '{target_sys}'. "
+                    f"Recommend initiating cross-company API contract alignment between `{silo_teams}` and counterpart team '{target_team}'."
+                )
+        except Exception as e:
+            logger.debug(f"Domain counterpart query error: {e}")
+
+        # 3. Check for shared third-party / external vendor dependencies
+        try:
+            vendor_query = """
+                MATCH (a:System)-[:DEPENDS_ON]->(ext:System {company_origin: 'External'})
+                WHERE a.id IN $node_ids
+                MATCH (b:System {company_origin: $target})-[:DEPENDS_ON]->(ext)
+                OPTIONAL MATCH (t_target:Team)-[:OWNS]->(b)
+                RETURN a.name, ext.name, b.name, coalesce(t_target.name, 'Platform Engineering') as target_team
+                LIMIT 1
+            """
+            v_res = graph.query(vendor_query, {"node_ids": node_ids, "target": target_company}).result_set
+            if v_res and v_res[0]:
+                silo_sys, ext_name, target_sys, target_team = v_res[0][0], v_res[0][1], v_res[0][2], v_res[0][3]
+                return (
+                    f"Shared External Dependency: Both '{silo_sys}' and {target_company}'s '{target_sys}' depend on shared external service '{ext_name}'. "
+                    f"Recommend synchronizing vendor integration through '{target_team}'."
+                )
+        except Exception as e:
+            logger.debug(f"Vendor dependency query error: {e}")
+
+        # 4. Check for reachable counterpart teams by functional department / role alignment
+        try:
+            team_query = """
+                MATCH (p_silo:Person) WHERE p_silo.id IN $node_ids AND p_silo.department IS NOT NULL
+                MATCH (p_target:Person {company_origin: $target})
+                WHERE toLower(p_silo.department) = toLower(p_target.department)
+                OPTIONAL MATCH (p_target)-[:MEMBER_OF]->(t_target:Team)
+                RETURN p_silo.name, p_target.name, coalesce(t_target.name, 'Architecture Guild') as target_team
+                LIMIT 1
+            """
+            t_res = graph.query(team_query, {"node_ids": node_ids, "target": target_company}).result_set
+            if t_res and t_res[0]:
+                p_silo, p_target, target_team = t_res[0][0], t_res[0][1], t_res[0][2]
+                return (
+                    f"Reachable Counterpart Team: Introduce '{p_silo}' to '{p_target}' ({target_team} at {target_company}) "
+                    f"via warm introduction path to coordinate architectural convergence."
+                )
+        except Exception as e:
+            logger.debug(f"Counterpart team query error: {e}")
+
+        # 5. When no evidence supports a bridge, state it explicitly (B18)
+        silo_teams = ", ".join(silo.get("teams", [])) or "Isolated unit"
+        return (
+            f"No suitable bridge was found: No candidate bridge edges, shared functional dependencies, or "
+            f"counterpart teams identified in {target_company} for `{silo_teams}`. "
+            f"Requires manual organizational and architectural domain assignment."
+        )
+
     def detect_organizational_silos(self) -> ToolResult:
         """Discovers isolated organizational islands and silos across FinPay and Vaultly
-        using Weakly Connected Components (WCC) graph clustering (B14).
+        using Weakly Connected Components (WCC) graph clustering (B14, B17, B18).
         Prioritizes FalkorDB native graph algorithm (CALL algo.wcc()) with seamless,
         documented fallback to Python graph traversal if unsupported.
         """
@@ -1026,10 +1128,12 @@ class GraphAgentTools:
 
         silo_components = []
         integrated_components = []
+        external_components = []
 
         for comp_idx, comp_node_ids in enumerate(components):
             comp_nodes = [nodes_data[nid] for nid in comp_node_ids if nid in nodes_data]
-            companies = {n["company"] for n in comp_nodes if n["company"] not in ("External", "Shared")}
+            all_companies = {n["company"] for n in comp_nodes if n.get("company")}
+            enterprise_companies = {c for c in all_companies if c not in ("External", "Shared", "ThirdParty", "Vendor", "Unknown")}
             teams = [n["name"] for n in comp_nodes if n["label"] == "Team"]
             systems = [n["name"] for n in comp_nodes if n["label"] == "System"]
             people = [n["name"] for n in comp_nodes if n["label"] == "Person"]
@@ -1037,17 +1141,28 @@ class GraphAgentTools:
             comp_info = {
                 "component_id": comp_idx + 1,
                 "node_count": len(comp_node_ids),
-                "companies": list(companies),
+                "companies": list(enterprise_companies),
+                "all_companies": list(all_companies),
                 "teams": teams,
                 "systems": systems,
                 "people": people,
                 "node_ids": comp_node_ids,
             }
 
-            if len(companies) > 1:
+            if len(enterprise_companies) > 1:
+                comp_info["classification"] = "integrated"
                 integrated_components.append(comp_info)
-            else:
+            elif len(enterprise_companies) == 1:
+                comp_info["classification"] = "silo"
+                comp_info["primary_company"] = list(enterprise_companies)[0]
+                comp_info["recommendation"] = self._find_silo_bridge_recommendation(graph, comp_info)
                 silo_components.append(comp_info)
+            else:
+                # External-only or unclassified components are separated from internal organizational silos (B17)
+                comp_info["classification"] = "external_or_unclassified"
+                comp_info["primary_company"] = list(all_companies)[0] if all_companies else "External"
+                comp_info["recommendation"] = "External / third-party component. No internal merger bridge required."
+                external_components.append(comp_info)
 
         # Fetch relationship triplets for subgraph visualization
         rel_triplets = []
@@ -1084,23 +1199,38 @@ class GraphAgentTools:
             f"- **Algorithm Engine**: {engine_label}",
             f"Discovered **{len(components)} connected components** across the enterprise knowledge graph (`{self.graph_name}`):\n",
             f"- **Integrated Core Networks**: {len(integrated_components)} component(s) bridging FinPay and Vaultly.",
-            f"- **Isolated Organizational Silos**: {len(silo_components)} disconnected island(s) with 0 cross-border connections.\n",
+            f"- **Isolated Organizational Silos**: {len(silo_components)} disconnected single-company island(s).",
         ]
+        if external_components:
+            lines.append(f"- **External & Third-Party Dependencies**: {len(external_components)} external/vendor cluster(s) (non-silos).\n")
+        else:
+            lines.append("")
 
         if silo_components:
             lines.append("#### Critical Siloed Business Units Detected:")
             for s in silo_components:
-                co_label = s["companies"][0] if s["companies"] else "Isolated"
+                co_label = s.get("primary_company", "Single-Company")
                 teams_str = ", ".join(s["teams"]) if s["teams"] else "No formal team entity"
                 people_str = ", ".join(s["people"]) if s["people"] else "None"
                 sys_str = ", ".join(s["systems"]) if s["systems"] else "None (Edge/Client layer)"
                 lines.append(
                     f"\n**[Silo Component #{s['component_id']} - {co_label}]** ({s['node_count']} nodes)\n"
+                    f"- **Company Origin**: `{co_label}`\n"
                     f"- **Isolated Teams**: `{teams_str}`\n"
                     f"- **Key Personnel**: {people_str}\n"
                     f"- **Associated Systems**: {sys_str}\n"
-                    f"- **Architectural Risk**: Team operates completely detached from the post-merger integration plane. High risk of duplicated engineering efforts, API schema mismatches, and compliance policy violations.\n"
-                    f"- **Recommended Integration Bridge**: Connect `{teams_str}` to FinPay Platform Infrastructure & Shared Identity via warm-intro or API contract alignment."
+                    f"- **Architectural Risk**: Team operates detached from the cross-company integration plane. High risk of redundant engineering efforts, API schema divergences, and unaligned governance.\n"
+                    f"- **Recommended Integration Bridge**: {s['recommendation']}"
+                )
+
+        if external_components:
+            lines.append("\n#### External & Third-Party Dependencies (Non-Silos):")
+            for ext in external_components:
+                comp_co = ", ".join(ext["all_companies"]) if ext["all_companies"] else "External"
+                sys_str = ", ".join(ext["systems"]) if ext["systems"] else f"{ext['node_count']} external entities"
+                lines.append(
+                    f"- **Component #{ext['component_id']}** ({ext['node_count']} nodes, {comp_co}): "
+                    f"Third-party external dependencies (`{sys_str}`). Not classified as internal organizational silo."
                 )
 
         if integrated_components:
@@ -1125,7 +1255,10 @@ class GraphAgentTools:
                 "total_components": len(components),
                 "isolated_silos_count": len(silo_components),
                 "integrated_networks_count": len(integrated_components),
+                "external_components_count": len(external_components),
                 "silos": silo_components,
+                "integrated": integrated_components,
+                "external_components": external_components,
             },
             subgraph=subgraph,
         )

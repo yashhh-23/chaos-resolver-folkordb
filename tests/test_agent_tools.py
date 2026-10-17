@@ -135,6 +135,59 @@ def test_tool_detect_organizational_silos_fallback(monkeypatch):
     assert "Python Adjacency Traversal Fallback" in res.text_answer
 
 
+def test_tool_detect_organizational_silos_b17_b18(monkeypatch):
+    """Verifies B17 (separates external-only components from silos) and B18 (evidence-based recommendations)."""
+    # 1. Real run on FalkorDB: verify no hardcoded string and proper structure
+    res = agent_tools.detect_organizational_silos()
+    assert res.tool_name == "detect_organizational_silos"
+    assert "FinPay Platform Infrastructure & Shared Identity via warm-intro" not in res.text_answer
+    assert "external_components_count" in res.details
+    assert "isolated_silos_count" in res.details
+    assert "integrated_networks_count" in res.details
+
+    # If silos exist (e.g. Vaultly Mobile Experience), verify evidence-derived recommendation
+    for silo in res.details.get("silos", []):
+        assert "recommendation" in silo
+        assert "FinPay Platform Infrastructure & Shared Identity" not in silo["recommendation"]
+        assert silo["classification"] == "silo"
+        assert len(silo["companies"]) == 1
+
+    # 2. Mock graph with an external-only component and verify B17 classification
+    original_get_graph = agent_tools._get_graph
+    real_graph = original_get_graph()
+
+    class MockExternalGraph:
+        def query(self, cypher: str, params: dict = None):
+            if "CALL algo.wcc()" in cypher:
+                # Mock 3 components: 1 integrated, 1 silo, 1 external-only
+                class MockNode:
+                    def __init__(self, nid, name, label, company):
+                        self.properties = {"id": nid, "name": name, "company_origin": company}
+                        self.labels = [label]
+
+                return type("MockResult", (), {
+                    "result_set": [
+                        # Component 0: Integrated (FinPay + Vaultly)
+                        [MockNode("finpay:sys:core", "FinPay Core", "System", "FinPay"), 0],
+                        [MockNode("vaultly:sys:core", "Vaultly Core", "System", "Vaultly"), 0],
+                        # Component 1: Genuine Silo (Vaultly only)
+                        [MockNode("vaultly:team:app", "Vaultly Mobile", "Team", "Vaultly"), 1],
+                        # Component 2: External-only (AWS / Third Party)
+                        [MockNode("ext:sys:aws_kms", "AWS KMS", "System", "External"), 2],
+                        [MockNode("ext:sys:stripe", "Stripe API", "System", "External"), 2],
+                    ]
+                })()
+            return real_graph.query(cypher, params)
+
+    monkeypatch.setattr(agent_tools, "_get_graph", lambda: MockExternalGraph())
+    ext_res = agent_tools.detect_organizational_silos()
+    assert ext_res.details["isolated_silos_count"] == 1, "External-only component must NOT be counted as an isolated silo"
+    assert ext_res.details["external_components_count"] == 1, "External-only component must be counted separately"
+    assert len(ext_res.details["external_components"]) == 1
+    assert ext_res.details["external_components"][0]["classification"] == "external_or_unclassified"
+    assert "External & Third-Party Dependencies" in ext_res.text_answer
+
+
 def test_mcp_execute_dispatcher():
     res = execute_tool("find_redundant_systems", {})
     assert res.tool_name == "find_redundant_systems"
