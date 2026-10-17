@@ -111,7 +111,6 @@ export default function WarRoomDashboard() {
         onFullGraphRefresh={handleFullGraphRefresh}
         onBackendHealthy={() => setIsHealthy(true)}
         isBackendHealthy={isHealthy}
-        graphData={graphData}
       />
 
       {/* Right Panel: Interactive FalkorDB Force-Graph Canvas */}

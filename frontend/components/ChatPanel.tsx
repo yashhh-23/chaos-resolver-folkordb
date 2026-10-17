@@ -77,8 +77,8 @@ function formatSeverityBadge(sev: string): string {
 }
 
 function formatInline(str: string): string {
-  // Convert `[HIGH]`, `[CRITICAL]`, [HIGH], [CRITICAL] into styled enterprise badges
-  let processed = str.replace(/`?\[(CRITICAL|HIGH|MEDIUM|LOW)\]`?/gi, (_, sev) => formatSeverityBadge(sev));
+  // Convert `[HIGH]`, `[CRITICAL]`, [HIGH], [CRITICAL] into styled enterprise badges (unless part of a markdown link [TEXT](url))
+  let processed = str.replace(/`?\[(CRITICAL|HIGH|MEDIUM|LOW)\]`?(?!\()/gi, (_, sev) => formatSeverityBadge(sev));
 
   const codeSpans: string[] = [];
   // 1. Extract inline code spans and replace with placeholder to protect internal asterisks/brackets
@@ -364,7 +364,6 @@ interface ChatPanelProps {
   onFullGraphRefresh?: (freshData?: SubgraphData) => Promise<void> | void;
   onBackendHealthy?: () => void;
   isBackendHealthy: boolean;
-  graphData?: SubgraphData;
 }
 
 const CRISIS_PROMPTS = [
@@ -419,7 +418,6 @@ export default function ChatPanel({
   onFullGraphRefresh,
   onBackendHealthy,
   isBackendHealthy,
-  graphData,
 }: ChatPanelProps) {
   const [messages, setMessages] = useState<Message[]>([
     {
