@@ -183,12 +183,13 @@ class GraphAgentTools:
 
     def find_counterpart_expert(self, topic: str, company: str = "Vaultly") -> ToolResult:
         """Identifies the actual subject-matter experts in the specified company
-
-        based on PR reviews, incident resolutions, authored RFCs, and PageRank.
+        based on PR reviews, incident resolutions, authored RFCs, and PageRank (B13).
+        Separates graph influence from topic relevance, provides concrete selection rationale,
+        and returns 'insufficient_evidence' when no verified artifact evidence exists.
         """
         graph = self._get_graph()
         subgraph = Subgraph()
-        topic_lower = topic.lower()
+        topic_lower = topic.strip().lower()
 
         query = """
             MATCH (p:Person {company_origin: $company})
@@ -210,76 +211,167 @@ class GraphAgentTools:
             tickets = [t for t in tickets if t.get("id")]
             systems = [s for s in systems if s.get("id")]
 
-            # Compute topic relevance score
-            relevance_matches = 0
             matching_evidence = []
+            topic_score = 0.0
 
+            # 1. Document authorship evidence
+            matching_docs = []
             for d in docs:
-                if topic_lower in d.get("title", "").lower() or topic_lower in d.get("excerpt", "").lower():
-                    relevance_matches += 2
-                    matching_evidence.append(f"Authored '{d.get('title')}'")
-            for t in tickets:
-                if topic_lower in t.get("title", "").lower():
-                    relevance_matches += 2
-                    matching_evidence.append(f"Resolved Incident '{t.get('title')}' ({t.get('severity')})")
-            for s in systems:
-                if topic_lower in s.get("name", "").lower() or topic_lower in s.get("domain", "").lower():
-                    relevance_matches += 1
-                    matching_evidence.append(f"Owns system '{s.get('name')}'")
+                title = d.get("title", "")
+                excerpt = d.get("excerpt", "")
+                if topic_lower in title.lower() or topic_lower in excerpt.lower():
+                    topic_score += 2.0
+                    matching_evidence.append(f"Authored '{title}'")
+                    matching_docs.append(d)
 
-            score = (pagerank or 0.5) + (0.2 * relevance_matches)
+            # 2. Incident ticket resolution evidence
+            matching_tickets = []
+            for t in tickets:
+                title = t.get("title", "")
+                if topic_lower in title.lower():
+                    topic_score += 2.0
+                    sev = t.get("severity", "Incident")
+                    matching_evidence.append(f"Resolved Incident '{title}' ({sev})")
+                    matching_tickets.append(t)
+
+            # 3. System ownership evidence
+            matching_systems = []
+            for s in systems:
+                sys_name = s.get("name", "")
+                sys_domain = s.get("domain", "")
+                if topic_lower in sys_name.lower() or topic_lower in sys_domain.lower():
+                    topic_score += 1.5
+                    matching_evidence.append(f"Owns system '{sys_name}' in domain '{sys_domain}'")
+                    matching_systems.append(s)
+
+            # 4. Role alignment evidence
+            if topic_lower in (role or "").lower():
+                topic_score += 1.0
+                matching_evidence.append(f"Role title directly aligns: '{role}'")
 
             candidates.append({
                 "person_id": p_id,
                 "name": name,
                 "role": role,
                 "email": email,
-                "pagerank": pagerank,
-                "relevance_score": round(score, 2),
+                "pagerank": round(pagerank or 0.5, 3),
+                "topic_evidence_score": round(topic_score, 2),
+                "evidence_count": len(matching_evidence),
                 "evidence": matching_evidence,
+                "matching_docs": matching_docs,
+                "matching_tickets": matching_tickets,
+                "matching_systems": matching_systems,
                 "docs": docs,
                 "tickets": tickets,
                 "systems": systems,
             })
 
-        # Sort by relevance score
-        candidates.sort(key=lambda c: c["relevance_score"], reverse=True)
-        top_expert = candidates[0] if candidates else None
-
-        if top_expert:
-            # Build Subgraph
-            subgraph.add_node(
-                top_expert["person_id"],
-                top_expert["name"],
-                "Person",
-                company,
-                {"role": top_expert["role"], "pagerank": top_expert["pagerank"]},
+        if not candidates:
+            return ToolResult(
+                tool_name="find_counterpart_expert",
+                status="not_found",
+                text_answer=f"No engineers or personnel registered in company '{company}'.",
+                details={"company": company, "topic": topic},
+                subgraph=subgraph,
             )
-            for d in top_expert["docs"]:
-                subgraph.add_node(d["id"], d["title"], "Document", company)
-                subgraph.add_edge(top_expert["person_id"], d["id"], "AUTHORED")
-            for t in top_expert["tickets"]:
-                subgraph.add_node(t["id"], t["title"], "Ticket", company, {"severity": t.get("severity")})
-                subgraph.add_edge(top_expert["person_id"], t["id"], "RESOLVED")
-            for s in top_expert["systems"]:
-                subgraph.add_node(s["id"], s["name"], "System", company, {"domain": s.get("domain")})
-                subgraph.add_edge(top_expert["person_id"], s["id"], "OWNS")
 
-            evidence_str = "\n".join(f"  - {e}" for e in top_expert["evidence"]) if top_expert["evidence"] else "  - Top PageRank SME based on system architecture ownership"
+        # Separate candidates with concrete evidence from those without evidence (B13)
+        evidence_candidates = [c for c in candidates if c["evidence_count"] > 0]
+        # Highest PageRank person in the company (for organizational context only)
+        top_influencer = sorted(candidates, key=lambda c: c["pagerank"], reverse=True)[0]
+
+        if not evidence_candidates:
+            # Insufficient topic evidence: NEVER falsely claim top PageRank person is SME for this topic
             text_answer = (
-                f"### Top SME Counterpart: **{top_expert['name']}** ({top_expert['role']} at {company})\n\n"
-                f"- **Email**: `{top_expert['email']}`\n"
-                f"- **PageRank Influence**: `{top_expert['pagerank']}` (Ranked #1 for '{topic}')\n"
-                f"- **Demonstrated Proof of Expertise**:\n{evidence_str}\n\n"
-                f"Recommended next step: Reach out directly on Slack or schedule an architectural alignment sync."
+                f"### Insufficient Evidence: No SME Found for '{topic}' in {company}\n\n"
+                f"No verified subject-matter expertise evidence (authored documents/RFCs, resolved incident tickets, "
+                f"or owned systems) was identified in **{company}**'s knowledge graph for the requested topic: `'{topic}'`.\n\n"
+                f"- **Topic Match Confidence**: `0.0` (Insufficient evidence)\n"
+                f"- **Artifacts Analyzed**: 0 matching RFCs, 0 incident tickets, 0 governed systems\n\n"
+                f"> **Organizational Centrality Context**: The highest-ranked person in {company} by overall graph PageRank "
+                f"is **{top_influencer['name']}** ({top_influencer['role']}, PageRank: `{top_influencer['pagerank']}`), "
+                f"but they possess no documented artifact evidence for '{topic}'. Topic rankings require concrete domain evidence."
             )
-        else:
-            text_answer = f"No counterpart experts found in company '{company}' for topic '{topic}'."
+            return ToolResult(
+                tool_name="find_counterpart_expert",
+                status="insufficient_evidence",
+                text_answer=text_answer,
+                details={
+                    "topic": topic,
+                    "company": company,
+                    "evidence_found": 0,
+                    "top_influencer": {
+                        "name": top_influencer["name"],
+                        "role": top_influencer["role"],
+                        "pagerank": top_influencer["pagerank"],
+                    },
+                    "evaluated_candidates": len(candidates),
+                },
+                subgraph=subgraph,
+            )
+
+        # Sort candidates who have evidence primarily by topic evidence score, with PageRank as tiebreaker
+        evidence_candidates.sort(
+            key=lambda c: (c["topic_evidence_score"], c["pagerank"]),
+            reverse=True,
+        )
+        top_expert = evidence_candidates[0]
+
+        # Build Subgraph with verified evidence entities
+        subgraph.add_node(
+            top_expert["person_id"],
+            top_expert["name"],
+            "Person",
+            company,
+            {
+                "role": top_expert["role"],
+                "pagerank": top_expert["pagerank"],
+                "topic_score": top_expert["topic_evidence_score"],
+            },
+        )
+        for d in top_expert["matching_docs"]:
+            subgraph.add_node(d["id"], d["title"], "Document", company)
+            subgraph.add_edge(top_expert["person_id"], d["id"], "AUTHORED")
+        for t in top_expert["matching_tickets"]:
+            subgraph.add_node(t["id"], t["title"], "Ticket", company, {"severity": t.get("severity")})
+            subgraph.add_edge(top_expert["person_id"], t["id"], "RESOLVED")
+        for s in top_expert["matching_systems"]:
+            subgraph.add_node(s["id"], s["name"], "System", company, {"domain": s.get("domain")})
+            subgraph.add_edge(top_expert["person_id"], s["id"], "OWNS")
+
+        evidence_str = "\n".join(f"  - {e}" for e in top_expert["evidence"])
+        text_answer = (
+            f"### Top SME Counterpart: **{top_expert['name']}** ({top_expert['role']} at {company})\n\n"
+            f"- **Email**: `{top_expert['email']}`\n"
+            f"- **Topic Relevance Score**: `{top_expert['topic_evidence_score']}` ({top_expert['evidence_count']} verified artifact match(es))\n"
+            f"- **Structural Graph Influence (PageRank)**: `{top_expert['pagerank']}`\n"
+            f"- **Demonstrated Proof of Expertise**:\n{evidence_str}\n\n"
+            f"Recommended next step: Reach out directly on Slack or schedule an architectural alignment sync."
+        )
 
         return ToolResult(
             tool_name="find_counterpart_expert",
+            status="success",
             text_answer=text_answer,
-            details={"candidates": candidates[:3]},
+            details={
+                "topic": topic,
+                "company": company,
+                "expert": top_expert["name"],
+                "topic_evidence_score": top_expert["topic_evidence_score"],
+                "graph_influence": top_expert["pagerank"],
+                "evidence_count": top_expert["evidence_count"],
+                "evidence": top_expert["evidence"],
+                "candidates": [
+                    {
+                        "name": c["name"],
+                        "role": c["role"],
+                        "topic_evidence_score": c["topic_evidence_score"],
+                        "pagerank": c["pagerank"],
+                        "evidence_count": c["evidence_count"],
+                    }
+                    for c in evidence_candidates[:3]
+                ],
+            },
             subgraph=subgraph,
         )
 
@@ -842,54 +934,94 @@ class GraphAgentTools:
 
     def detect_organizational_silos(self) -> ToolResult:
         """Discovers isolated organizational islands and silos across FinPay and Vaultly
-        using Weakly Connected Components (WCC) graph clustering.
-        Identifies unintegrated teams, single-tenant clusters, and recommends bridges.
+        using Weakly Connected Components (WCC) graph clustering (B14).
+        Prioritizes FalkorDB native graph algorithm (CALL algo.wcc()) with seamless,
+        documented fallback to Python graph traversal if unsupported.
         """
         graph = self._get_graph()
         subgraph = Subgraph()
+        nodes_data: Dict[str, Dict[str, Any]] = {}
+        components: List[List[str]] = []
+        algorithm_used = "python_adjacency_fallback"
 
-        node_res = graph.query("""
-            MATCH (n)
-            RETURN n.id, coalesce(n.name, n.title, n.summary, n.id) as display_name,
-                   labels(n)[0] as label, coalesce(n.company_origin, 'External') as company,
-                   properties(n) as props
-        """)
-        rel_res = graph.query("MATCH (a)-[r]->(b) RETURN a.id, b.id, type(r)")
+        # 1. Attempt FalkorDB native GraphBLAS algorithm: CALL algo.wcc()
+        try:
+            native_res = graph.query("CALL algo.wcc()")
+            if native_res and native_res.result_set:
+                from collections import defaultdict
+                comp_map = defaultdict(list)
+                for row in native_res.result_set:
+                    node_obj, comp_id = row[0], row[1]
+                    props = dict(getattr(node_obj, "properties", {}))
+                    nid = props.get("id")
+                    if not nid:
+                        continue
+                    disp_name = (
+                        props.get("name")
+                        or props.get("title")
+                        or props.get("summary")
+                        or nid
+                    )
+                    labels = getattr(node_obj, "labels", [])
+                    label = labels[0] if labels else "Node"
+                    company = props.get("company_origin", "External")
 
-        nodes_data = {
-            r[0]: {
-                "name": r[1],
-                "label": r[2],
-                "company": r[3],
-                "props": r[4] if isinstance(r[4], dict) else {},
+                    nodes_data[nid] = {
+                        "name": disp_name,
+                        "label": label,
+                        "company": company,
+                        "props": props,
+                    }
+                    comp_map[comp_id].append(nid)
+
+                components = list(comp_map.values())
+                algorithm_used = "falkordb_native_algo_wcc"
+                logger.info(f"[{self.graph_name}] Successfully executed FalkorDB native graph algorithm: CALL algo.wcc() ({len(components)} components).")
+        except Exception as e:
+            logger.warning(f"[{self.graph_name}] FalkorDB native CALL algo.wcc() unavailable: {e}. Executing Python queue traversal fallback.")
+            algorithm_used = "python_adjacency_fallback"
+
+        # 2. Seamless documented fallback: queue-based BFS traversal if native unavailable
+        if not nodes_data or algorithm_used == "python_adjacency_fallback":
+            node_res = graph.query("""
+                MATCH (n)
+                RETURN n.id, coalesce(n.name, n.title, n.summary, n.id) as display_name,
+                       labels(n)[0] as label, coalesce(n.company_origin, 'External') as company,
+                       properties(n) as props
+            """)
+            nodes_data = {
+                r[0]: {
+                    "name": r[1],
+                    "label": r[2],
+                    "company": r[3],
+                    "props": r[4] if isinstance(r[4], dict) else {},
+                }
+                for r in node_res.result_set
             }
-            for r in node_res.result_set
-        }
 
-        adj: Dict[str, set] = {nid: set() for nid in nodes_data}
-        rel_triplets = []
-        for a_id, b_id, r_type in rel_res.result_set:
-            rel_triplets.append((a_id, b_id, r_type))
-            if a_id in adj and b_id in adj:
-                adj[a_id].add(b_id)
-                adj[b_id].add(a_id)
+            adj: Dict[str, set] = {nid: set() for nid in nodes_data}
+            rel_res = graph.query("MATCH (a)-[r]->(b) RETURN a.id, b.id")
+            for a_id, b_id in rel_res.result_set:
+                if a_id in adj and b_id in adj:
+                    adj[a_id].add(b_id)
+                    adj[b_id].add(a_id)
 
-        # 1. Compute Weakly Connected Components (WCC)
-        visited = set()
-        components = []
-        for nid in nodes_data:
-            if nid not in visited:
-                comp = []
-                queue = [nid]
-                visited.add(nid)
-                for curr in queue:
-                    comp.append(curr)
-                    for neighbor in adj.get(curr, []):
-                        if neighbor not in visited:
-                            visited.add(neighbor)
-                            queue.append(neighbor)
-                components.append(comp)
+            visited = set()
+            components = []
+            for nid in nodes_data:
+                if nid not in visited:
+                    comp = []
+                    queue = [nid]
+                    visited.add(nid)
+                    for curr in queue:
+                        comp.append(curr)
+                        for neighbor in adj.get(curr, []):
+                            if neighbor not in visited:
+                                visited.add(neighbor)
+                                queue.append(neighbor)
+                    components.append(comp)
 
+        # Sort components by size descending
         components.sort(key=lambda c: len(c), reverse=True)
 
         silo_components = []
@@ -917,7 +1049,16 @@ class GraphAgentTools:
             else:
                 silo_components.append(comp_info)
 
-        # 2. Build Subgraph visualization: include siloed nodes and key bridge entities
+        # Fetch relationship triplets for subgraph visualization
+        rel_triplets = []
+        try:
+            rel_res = graph.query("MATCH (a)-[r]->(b) RETURN a.id, b.id, type(r)")
+            for a_id, b_id, r_type in rel_res.result_set:
+                rel_triplets.append((a_id, b_id, r_type))
+        except Exception as e:
+            logger.warning(f"Could not fetch relationships for subgraph: {e}")
+
+        # 3. Build Subgraph visualization: include siloed nodes and key bridge entities
         self._build_component_subgraph(silo_components, nodes_data, subgraph)
         self._build_component_subgraph(
             integrated_components,
@@ -932,9 +1073,15 @@ class GraphAgentTools:
             if a_id in subgraph_node_ids and b_id in subgraph_node_ids:
                 subgraph.add_edge(a_id, b_id, r_type)
 
-        # 3. Format markdown response
+        # 4. Format markdown response
+        engine_label = (
+            "FalkorDB Native GraphBLAS WCC (`CALL algo.wcc()`)"
+            if algorithm_used == "falkordb_native_algo_wcc"
+            else "Python Adjacency Traversal Fallback (BFS Components)"
+        )
         lines = [
             f"### Organizational Silo & Network Topology Analysis (Weakly Connected Components)\n",
+            f"- **Algorithm Engine**: {engine_label}",
             f"Discovered **{len(components)} connected components** across the enterprise knowledge graph (`{self.graph_name}`):\n",
             f"- **Integrated Core Networks**: {len(integrated_components)} component(s) bridging FinPay and Vaultly.",
             f"- **Isolated Organizational Silos**: {len(silo_components)} disconnected island(s) with 0 cross-border connections.\n",
@@ -966,13 +1113,15 @@ class GraphAgentTools:
                 )
 
         lines.append(
-            "\n> *Algorithm: Weakly Connected Components (WCC) computed over the complete multigraph tenant to guarantee organizational visibility.*"
+            f"\n> *Algorithm: {engine_label} computed over '{self.graph_name}' to guarantee complete organizational network topology.*"
         )
 
         return ToolResult(
             tool_name="detect_organizational_silos",
             text_answer="\n".join(lines),
             details={
+                "algorithm": algorithm_used,
+                "native_algorithm": (algorithm_used == "falkordb_native_algo_wcc"),
                 "total_components": len(components),
                 "isolated_silos_count": len(silo_components),
                 "integrated_networks_count": len(integrated_components),

@@ -26,9 +26,27 @@ def test_tool_find_counterpart_expert():
     res = agent_tools.find_counterpart_expert(topic="Authentication", company="Vaultly")
     assert isinstance(res, ToolResult)
     assert res.tool_name == "find_counterpart_expert"
+    assert res.status == "success"
     assert "Diya Nair" in res.text_answer
+    assert res.details["expert"] == "Diya Nair"
+    assert res.details["topic_evidence_score"] > 0.0
+    assert res.details["graph_influence"] >= 0.5
+    assert res.details["evidence_count"] >= 1
     assert len(res.subgraph.nodes) > 0
     assert any(n.name == "Diya Nair" for n in res.subgraph.nodes)
+
+
+def test_tool_find_counterpart_expert_insufficient_evidence():
+    """Verifies that an unsupported topic returns insufficient_evidence rather than falsely crowning top PageRank (B13)."""
+    res = agent_tools.find_counterpart_expert(topic="Quantum Cryptography Supercomputing", company="Vaultly")
+    assert isinstance(res, ToolResult)
+    assert res.tool_name == "find_counterpart_expert"
+    assert res.status == "insufficient_evidence"
+    assert res.details["evidence_found"] == 0
+    assert "expert" not in res.details
+    assert "Insufficient Evidence" in res.text_answer
+    assert "Organizational Centrality Context" in res.text_answer
+    assert "Topic rankings require concrete domain evidence" in res.text_answer
 
 
 def test_tool_detect_policy_conflicts():
@@ -88,6 +106,33 @@ def test_tool_detect_organizational_silos():
     assert "Weakly Connected Components" in res.text_answer
     assert res.details.get("total_components", 0) >= 1
     assert len(res.subgraph.nodes) > 0
+    assert res.details["algorithm"] in ["falkordb_native_algo_wcc", "python_adjacency_fallback"]
+    assert "native_algorithm" in res.details
+
+
+def test_tool_detect_organizational_silos_fallback(monkeypatch):
+    """Verifies seamless fallback to Python adjacency BFS when FalkorDB CALL algo.wcc fails or is unsupported (B14)."""
+    original_get_graph = agent_tools._get_graph
+
+    class MockFailingGraph:
+        def __init__(self, real_graph):
+            self.real_graph = real_graph
+
+        def query(self, cypher: str, params: dict = None):
+            if "CALL algo.wcc()" in cypher:
+                raise Exception("Procedure algo.wcc not available in mock test environment")
+            return self.real_graph.query(cypher, params)
+
+    real_graph = original_get_graph()
+    monkeypatch.setattr(agent_tools, "_get_graph", lambda: MockFailingGraph(real_graph))
+
+    res = agent_tools.detect_organizational_silos()
+    assert isinstance(res, ToolResult)
+    assert res.tool_name == "detect_organizational_silos"
+    assert res.details["algorithm"] == "python_adjacency_fallback"
+    assert res.details["native_algorithm"] is False
+    assert res.details["total_components"] >= 1
+    assert "Python Adjacency Traversal Fallback" in res.text_answer
 
 
 def test_mcp_execute_dispatcher():
