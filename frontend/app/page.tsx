@@ -21,6 +21,42 @@ export default function WarRoomDashboard() {
   ]);
   const [selectedGraph, setSelectedGraph] = useState<string>("merged_brain");
 
+  // Draggable splitter & graph maximize state
+  const [chatWidth, setChatWidth] = useState<number>(480);
+  const [isResizing, setIsResizing] = useState<boolean>(false);
+  const [isMaximized, setIsMaximized] = useState<boolean>(false);
+
+  // Mouse drag handlers for resizing chat panel vs graph canvas
+  useEffect(() => {
+    if (!isResizing) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      const minWidth = 280;
+      const maxWidth = Math.max(minWidth, Math.floor(window.innerWidth * 0.75));
+      const newWidth = Math.min(Math.max(e.clientX, minWidth), maxWidth);
+      setChatWidth(newWidth);
+    };
+
+    const handleMouseUp = () => {
+      setIsResizing(false);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+  }, [isResizing]);
+
   // Load graph and health check on mount or when graph tenant selection changes
   useEffect(() => {
     async function loadGraphData() {
@@ -105,16 +141,43 @@ export default function WarRoomDashboard() {
   return (
     <main className="flex h-screen w-screen overflow-hidden bg-slate-950 font-sans">
       {/* Left Panel: Agent Chat & M&A Crisis Prompts */}
-      <ChatPanel
-        selectedGraph={selectedGraph}
-        onSubgraphUpdate={handleSubgraphUpdate}
-        onFullGraphRefresh={handleFullGraphRefresh}
-        onBackendHealthy={() => setIsHealthy(true)}
-        isBackendHealthy={isHealthy}
-      />
+      <div
+        style={{
+          width: isMaximized ? 0 : `${chatWidth}px`,
+          minWidth: isMaximized ? 0 : undefined,
+        }}
+        className={`h-full flex-shrink-0 transition-[width] ${
+          isResizing ? "duration-0" : "duration-200"
+        } ${isMaximized ? "overflow-hidden opacity-0 pointer-events-none" : "opacity-100"}`}
+      >
+        <ChatPanel
+          selectedGraph={selectedGraph}
+          onSubgraphUpdate={handleSubgraphUpdate}
+          onFullGraphRefresh={handleFullGraphRefresh}
+          onBackendHealthy={() => setIsHealthy(true)}
+          isBackendHealthy={isHealthy}
+        />
+      </div>
+
+      {/* Draggable Divider Handle between Chatbot and Graph */}
+      {!isMaximized && (
+        <div
+          onMouseDown={(e) => {
+            e.preventDefault();
+            setIsResizing(true);
+          }}
+          className={`relative w-1.5 hover:w-2 transition-all cursor-col-resize z-30 flex items-center justify-center select-none group bg-slate-900 border-x border-slate-800 hover:bg-indigo-600 active:bg-indigo-500 ${
+            isResizing ? "bg-indigo-600 w-2 shadow-[0_0_12px_#6366f1]" : ""
+          }`}
+          title="Drag left/right to resize Chat Panel and Graph Canvas"
+        >
+          {/* Subtle grab handle indicator */}
+          <div className="w-0.5 h-8 rounded-full bg-slate-600 group-hover:bg-white transition-colors" />
+        </div>
+      )}
 
       {/* Right Panel: Interactive FalkorDB Force-Graph Canvas */}
-      <div className="relative flex-1 h-full bg-slate-950">
+      <div className="relative flex-1 h-full min-w-0 bg-slate-950">
         {/* Floating Tenant Graph Selector Pill for Judges */}
         <div className="absolute top-4 left-4 z-20 flex items-center gap-1.5 p-1 bg-slate-900/90 backdrop-blur-md border border-slate-700/80 rounded-xl shadow-xl text-xs">
           <span className="px-2.5 py-1 text-slate-400 font-semibold uppercase tracking-wider text-[10px]">
@@ -155,6 +218,8 @@ export default function WarRoomDashboard() {
           activeSubgraph={activeSubgraph}
           onNodeClick={(node) => setSelectedNode(node)}
           isLoading={isLoading}
+          isMaximized={isMaximized}
+          onToggleMaximize={() => setIsMaximized((prev) => !prev)}
         />
 
         {/* Selected Node Properties Drawer */}

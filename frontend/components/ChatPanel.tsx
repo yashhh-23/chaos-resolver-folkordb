@@ -609,7 +609,7 @@ export default function ChatPanel({
   };
 
   return (
-    <div className="flex flex-col h-full bg-slate-900 border-r border-slate-800 w-full lg:w-[480px] xl:w-[540px]">
+    <div className="flex flex-col h-full bg-slate-900 border-r border-slate-800 w-full">
       {/* Header */}
       <div className="p-4 border-b border-slate-800 flex items-center justify-between bg-slate-900/60 backdrop-blur-md">
         <div>

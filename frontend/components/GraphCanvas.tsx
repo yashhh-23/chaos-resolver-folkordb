@@ -4,24 +4,35 @@ import React, { useRef, useEffect, useState, useMemo } from "react";
 import dynamic from "next/dynamic";
 import { GraphNode, SubgraphData } from "@/lib/api";
 import { getEndpointId } from "@/lib/utils";
-import { ZoomIn, ZoomOut, Maximize2, Layers, RefreshCw } from "lucide-react";
+import { ZoomIn, ZoomOut, Maximize2, Minimize2, RotateCcw, Layers, RefreshCw } from "lucide-react";
 
-// Dynamically import ForceGraph2D with ssr disabled
-const ForceGraph2D = dynamic(() => import("react-force-graph-2d"), {
-  ssr: false,
-  loading: () => (
-    <div className="h-full w-full flex items-center justify-center bg-slate-950 text-slate-400">
-      <RefreshCw className="w-6 h-6 animate-spin mr-2" />
-      Loading FalkorDB Live Canvas...
-    </div>
-  ),
-});
+// Dynamically import ForceGraph2D with ssr disabled and forwardRef support
+const ForceGraph2D = dynamic(
+  () =>
+    import("react-force-graph-2d").then((mod) => {
+      const Component = mod.default;
+      return React.forwardRef<any, any>((props, ref) => (
+        <Component ref={ref as any} {...props} />
+      ));
+    }),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="h-full w-full flex items-center justify-center bg-slate-950 text-slate-400">
+        <RefreshCw className="w-6 h-6 animate-spin mr-2" />
+        Loading FalkorDB Live Canvas...
+      </div>
+    ),
+  }
+);
 
 interface GraphCanvasProps {
   data: SubgraphData;
   activeSubgraph?: SubgraphData | null;
   onNodeClick?: (node: GraphNode) => void;
   isLoading?: boolean;
+  isMaximized?: boolean;
+  onToggleMaximize?: () => void;
 }
 
 export default function GraphCanvas({
@@ -29,25 +40,42 @@ export default function GraphCanvas({
   activeSubgraph,
   onNodeClick,
   isLoading,
+  isMaximized = false,
+  onToggleMaximize,
 }: GraphCanvasProps) {
   const fgRef = useRef<any>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
   const [showOnlyActive, setShowOnlyActive] = useState(false);
 
-  // Measure container dimensions
+  // Measure container dimensions with ResizeObserver for instant splitter dragging responsiveness
   useEffect(() => {
     function updateDimensions() {
       if (containerRef.current) {
-        setDimensions({
-          width: containerRef.current.clientWidth,
-          height: containerRef.current.clientHeight,
-        });
+        const { clientWidth, clientHeight } = containerRef.current;
+        if (clientWidth > 0 && clientHeight > 0) {
+          setDimensions({
+            width: clientWidth,
+            height: clientHeight,
+          });
+        }
       }
     }
     updateDimensions();
+
+    let resizeObserver: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== "undefined" && containerRef.current) {
+      resizeObserver = new ResizeObserver(() => {
+        updateDimensions();
+      });
+      resizeObserver.observe(containerRef.current);
+    }
+
     window.addEventListener("resize", updateDimensions);
-    return () => window.removeEventListener("resize", updateDimensions);
+    return () => {
+      window.removeEventListener("resize", updateDimensions);
+      resizeObserver?.disconnect();
+    };
   }, []);
 
   // Compute active node and edge sets
@@ -96,10 +124,50 @@ export default function GraphCanvas({
   useEffect(() => {
     if (fgRef.current) {
       setTimeout(() => {
-        fgRef.current?.zoomToFit(400, 40);
+        fgRef.current?.zoomToFit?.(400, 40);
       }, 500);
     }
   }, [displayData]);
+
+  // Re-center on canvas when maximized or minimized layout changes
+  useEffect(() => {
+    if (fgRef.current) {
+      setTimeout(() => {
+        fgRef.current?.zoomToFit?.(400, 40);
+      }, 300);
+    }
+  }, [isMaximized]);
+
+  const handleZoomIn = () => {
+    if (!fgRef.current) return;
+    try {
+      const current = typeof fgRef.current.zoom === "function" ? fgRef.current.zoom() : 1;
+      const validZoom = typeof current === "number" && !isNaN(current) && current > 0 ? current : 1;
+      fgRef.current.zoom(validZoom * 1.35, 300);
+    } catch (e) {
+      console.warn("Zoom In error:", e);
+    }
+  };
+
+  const handleZoomOut = () => {
+    if (!fgRef.current) return;
+    try {
+      const current = typeof fgRef.current.zoom === "function" ? fgRef.current.zoom() : 1;
+      const validZoom = typeof current === "number" && !isNaN(current) && current > 0 ? current : 1;
+      fgRef.current.zoom(Math.max(validZoom * 0.7, 0.05), 300);
+    } catch (e) {
+      console.warn("Zoom Out error:", e);
+    }
+  };
+
+  const handleFitView = () => {
+    if (!fgRef.current) return;
+    try {
+      fgRef.current.zoomToFit?.(400, 40);
+    } catch (e) {
+      console.warn("Fit view error:", e);
+    }
+  };
 
   // Color functions
   const getNodeColor = (node: GraphNode) => {
@@ -175,33 +243,42 @@ export default function GraphCanvas({
       </div>
 
       {/* Floating Canvas Controls */}
-      <div className="absolute top-4 right-4 z-10 flex flex-col gap-1.5 bg-slate-900/80 backdrop-blur-md p-1.5 rounded-lg border border-slate-800 shadow-xl">
+      <div className="absolute top-4 right-4 z-20 flex flex-col gap-1.5 bg-slate-900/80 backdrop-blur-md p-1.5 rounded-lg border border-slate-800 shadow-xl">
         <button
-          onClick={() => fgRef.current?.zoom(fgRef.current.zoom() * 1.3, 300)}
-          className="p-1.5 hover:bg-slate-800 text-slate-300 rounded transition"
+          onClick={handleZoomIn}
+          className="p-1.5 hover:bg-slate-800 text-slate-300 hover:text-white rounded transition"
           title="Zoom In"
         >
           <ZoomIn className="w-4 h-4" />
         </button>
         <button
-          onClick={() => fgRef.current?.zoom(fgRef.current.zoom() * 0.7, 300)}
-          className="p-1.5 hover:bg-slate-800 text-slate-300 rounded transition"
+          onClick={handleZoomOut}
+          className="p-1.5 hover:bg-slate-800 text-slate-300 hover:text-white rounded transition"
           title="Zoom Out"
         >
           <ZoomOut className="w-4 h-4" />
         </button>
         <button
-          onClick={() => fgRef.current?.zoomToFit(400, 40)}
-          className="p-1.5 hover:bg-slate-800 text-slate-300 rounded transition"
+          onClick={handleFitView}
+          className="p-1.5 hover:bg-slate-800 text-slate-300 hover:text-white rounded transition"
           title="Fit View"
         >
-          <Maximize2 className="w-4 h-4" />
+          <RotateCcw className="w-4 h-4" />
         </button>
+        {onToggleMaximize && (
+          <button
+            onClick={onToggleMaximize}
+            className="p-1.5 hover:bg-slate-800 text-slate-300 hover:text-white rounded transition"
+            title={isMaximized ? "Restore Split View" : "Maximize Graph Fullscreen"}
+          >
+            {isMaximized ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+          </button>
+        )}
         {activeSubgraph && activeSubgraph.nodes.length > 0 && (
           <button
             onClick={() => setShowOnlyActive(!showOnlyActive)}
             className={`p-1.5 rounded transition ${
-              showOnlyActive ? "bg-cyan-600 text-white" : "hover:bg-slate-800 text-slate-300"
+              showOnlyActive ? "bg-cyan-600 text-white" : "hover:bg-slate-800 text-slate-300 hover:text-white"
             }`}
             title="Toggle Tool Subgraph Isolation"
           >
