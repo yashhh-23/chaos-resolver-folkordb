@@ -21,6 +21,8 @@ import { SubgraphData, ToolResponse, callTool, mutateGraph, chatWithAgent } from
 
 
 
+import Markdown from "markdown-to-jsx";
+
 export interface Message {
   id: string;
   sender: "user" | "agent";
@@ -29,25 +31,6 @@ export interface Message {
   subgraph?: SubgraphData;
   timestamp: string;
 }
-
-function escapeHtml(str: string): string {
-  return str
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
-const EMOJI_TO_SVG: Record<string, string> = {
-  "🧠": `<svg class="inline-block w-4 h-4 text-cyan-400 align-text-bottom mr-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/><path d="M17.599 6.5a3 3 0 0 0 .399-1.375"/><path d="M6.003 5.125A3 3 0 0 0 6.401 6.5"/><path d="M3.477 10.896a4 4 0 0 1 .585-.396"/><path d="M19.938 10.5a4 4 0 0 1 .585.396"/><path d="M6 18a4 4 0 0 1-1.967-.516"/><path d="M19.967 17.484A4 4 0 0 1 18 18"/></svg>`,
-  "⚡": `<svg class="inline-block w-3.5 h-3.5 text-amber-400 align-text-bottom mr-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>`,
-  "⚠️": `<svg class="inline-block w-3.5 h-3.5 text-amber-400 align-text-bottom mr-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>`,
-  "🔍": `<svg class="inline-block w-3.5 h-3.5 text-cyan-400 align-text-bottom mr-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>`,
-  "🔗": `<svg class="inline-block w-3.5 h-3.5 text-indigo-400 align-text-bottom mr-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>`,
-  "🏝️": `<svg class="inline-block w-3.5 h-3.5 text-cyan-400 align-text-bottom mr-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>`,
-  "🏝": `<svg class="inline-block w-3.5 h-3.5 text-cyan-400 align-text-bottom mr-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>`,
-};
 
 const TOOL_DISPLAY_NAMES: Record<string, string> = {
   live_mutation: "Real-Time Alignment",
@@ -67,295 +50,312 @@ function formatToolBadge(name?: string): string {
   return TOOL_DISPLAY_NAMES[name] || name.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-function formatSeverityBadge(sev: string): string {
-  const upper = sev.toUpperCase();
-  let color = "bg-red-950/80 text-red-300 border-red-700/80";
-  if (upper === "HIGH") color = "bg-amber-950/80 text-amber-300 border-amber-600/80";
-  if (upper === "MEDIUM") color = "bg-yellow-950/80 text-yellow-300 border-yellow-600/80";
-  if (upper === "LOW") color = "bg-blue-950/80 text-blue-300 border-blue-600/80";
-  return `<span class="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold tracking-wider uppercase border ${color} ml-1.5 shadow-sm align-middle">${upper} SEVERITY</span>`;
+interface ParsedBlock {
+  type: "text" | "details";
+  summary?: string;
+  content: string;
+  children?: ParsedBlock[];
 }
 
-function formatInline(str: string): string {
-  // Convert `[HIGH]`, `[CRITICAL]`, [HIGH], [CRITICAL] into styled enterprise badges (unless part of a markdown link [TEXT](url))
-  let processed = str.replace(/`?\[(CRITICAL|HIGH|MEDIUM|LOW)\]`?(?!\()/gi, (_, sev) => formatSeverityBadge(sev));
+/**
+ * Robustly parses balanced <details>...</details> blocks supporting arbitrary nesting.
+ * Raw HTML inside markdown is disabled so hostile tags can never be injected.
+ */
+function parseDetailsBlocks(text: string): ParsedBlock[] {
+  const result: ParsedBlock[] = [];
+  let remaining = text;
+  const openTagRegex = /<details(?:\s+class="([^"]*)")?>/i;
 
-  const codeSpans: string[] = [];
-  // 1. Extract inline code spans and replace with placeholder to protect internal asterisks/brackets
-  processed = processed.replace(/`([^`]+)`/g, (_, code) => {
-    const idx = codeSpans.length;
-    codeSpans.push(
-      `<code class="bg-slate-950 text-cyan-300 px-1 py-0.5 rounded font-mono text-[11px] border border-slate-800">${code}</code>`
-    );
-    return `___INLINE_CODE_${idx}___`;
-  });
-
-  // 2. Bold: **bold**
-  processed = processed.replace(/\*\*([^*]+)\*\*/g, '<strong class="font-bold text-white">$1</strong>');
-
-  // 3. Italic: *italic*
-  processed = processed.replace(/\*([^*]+)\*/g, '<em class="text-slate-300">$1</em>');
-
-  // 4. Links: [text](url)
-  processed = processed.replace(
-    /\[(.*?)\]\(((?:https?:\/\/|\/|mailto:)[^\s"'>]+)\)/g,
-    '<a href="$2" target="_blank" rel="noopener noreferrer" class="text-cyan-400 underline underline-offset-2 hover:text-cyan-300 font-medium">$1</a>'
-  );
-
-  // 5. Replace any emojis with proper inline SVGs
-  for (const [emoji, svg] of Object.entries(EMOJI_TO_SVG)) {
-    if (processed.includes(emoji)) {
-      processed = processed.split(emoji).join(svg);
+  while (remaining.length > 0) {
+    const match = openTagRegex.exec(remaining);
+    if (!match) {
+      if (remaining) result.push({ type: "text", content: remaining });
+      break;
     }
+
+    const startIndex = match.index;
+    if (startIndex > 0) {
+      result.push({ type: "text", content: remaining.slice(0, startIndex) });
+    }
+
+    let depth = 1;
+    let cursor = startIndex + match[0].length;
+    let endIndex = -1;
+
+    while (cursor < remaining.length) {
+      const remainingSlice = remaining.slice(cursor);
+      const nextOpen = remainingSlice.search(/<details(?:\s+[^>]*)?>/i);
+      const nextClose = remainingSlice.search(/<\/details>/i);
+
+      if (nextClose === -1) {
+        break;
+      }
+
+      if (nextOpen !== -1 && nextOpen < nextClose) {
+        depth++;
+        cursor += nextOpen + 9;
+      } else {
+        depth--;
+        if (depth === 0) {
+          endIndex = cursor + nextClose + 10;
+          break;
+        }
+        cursor += nextClose + 10;
+      }
+    }
+
+    if (endIndex === -1) {
+      result.push({ type: "text", content: remaining.slice(startIndex) });
+      break;
+    }
+
+    const detailsBlock = remaining.slice(startIndex, endIndex);
+    const summaryMatch = /<summary>([\s\S]*?)<\/summary>/i.exec(detailsBlock);
+    const summary = summaryMatch ? summaryMatch[1].trim() : "Thinking & Query Execution";
+
+    let innerContent = "";
+    if (summaryMatch) {
+      const summaryEnd = summaryMatch.index + summaryMatch[0].length;
+      innerContent = detailsBlock.slice(summaryEnd, detailsBlock.lastIndexOf("</details>"));
+    } else {
+      innerContent = detailsBlock.slice(match[0].length, detailsBlock.lastIndexOf("</details>"));
+    }
+
+    result.push({
+      type: "details",
+      summary: summary,
+      content: innerContent.trim(),
+      children: parseDetailsBlocks(innerContent.trim()),
+    });
+
+    remaining = remaining.slice(endIndex);
   }
 
-  // 6. Restore protected code spans
-  return processed.replace(/___INLINE_CODE_(\d+)___/g, (_, idx) => codeSpans[Number(idx)] || "");
+  return result;
 }
 
-function renderSafeMarkdown(text: string): string {
-  if (!text) return "";
-
-  // 1. Extract <details>...</details> blocks to render interactive collapsible dropdowns
-  const detailsBlocks: string[] = [];
-  const textWithoutDetails = text.replace(
-    /<details(?:\s+class="([^"]*)")?>\s*(?:<summary>(.*?)<\/summary>)?([\s\S]*?)<\/details>/gi,
-    (_, _cls, summary, content) => {
-      const idx = detailsBlocks.length;
-      const cleanSummary = (summary || "Thinking & Query Execution").trim();
-      const renderedContent = renderSafeMarkdown(content.trim());
-      const detailsHtml = `
-<details class="group my-2.5 border border-slate-800/80 bg-slate-950/60 hover:bg-slate-950/80 rounded-lg overflow-hidden transition-all duration-200 shadow-sm">
-  <summary class="flex items-center justify-between cursor-pointer select-none px-3 py-2 text-[11px] font-medium text-slate-400 hover:text-cyan-300 bg-slate-900/40 hover:bg-slate-900/70 border-b border-transparent group-open:border-slate-800/70 transition-all">
-    <span class="flex items-center gap-1.5 font-mono">
-      <svg class="w-3.5 h-3.5 text-cyan-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/></svg>
-      <span>${formatInline(escapeHtml(cleanSummary))}</span>
-    </span>
-    <span class="text-[10px] text-slate-500 font-mono group-open:rotate-180 transition-transform duration-200">▼</span>
-  </summary>
-  <div class="p-3 text-[11px] space-y-2 text-slate-300 font-normal">
-    ${renderedContent}
-  </div>
-</details>`.trim();
-      detailsBlocks.push(detailsHtml);
-      return `\n\n___DETAILS_BLOCK_${idx}___\n\n`;
-    }
-  );
-
-  // 2. Escape all raw HTML to neutralize XSS
-  const escaped = escapeHtml(textWithoutDetails);
-
-  // 3. Process block elements line by line
-  const lines = escaped.split(/\r?\n/);
-  const output: string[] = [];
-  let inUl = false;
-  let inOl = false;
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-
-    // Details block placeholder
-    const detailsMatch = line.trim().match(/^___DETAILS_BLOCK_(\d+)___$/);
-    if (detailsMatch) {
-      if (inUl) {
-        output.push("</ul>");
-        inUl = false;
+const safeMarkdownOverrides = {
+  a: {
+    component: ({ href, children, ...props }: any) => {
+      // Safe link handling: only allow http://, https://, /, or mailto:
+      const isSafe = /^(?:https?:\/\/|\/|mailto:)[^\s"'>]+$/i.test(href || "");
+      if (!isSafe) {
+        return <span className="text-slate-300 font-mono text-[11px]">{children}</span>;
       }
-      if (inOl) {
-        output.push("</ol>");
-        inOl = false;
-      }
-      const idx = Number(detailsMatch[1]);
-      output.push(detailsBlocks[idx] || "");
-      continue;
-    }
-
-    // Markdown Table parsing (consecutive lines starting & ending with |)
-    if (line.trim().startsWith("|") && line.trim().endsWith("|")) {
-      const tableLines: string[] = [line.trim()];
-      while (
-        i + 1 < lines.length &&
-        lines[i + 1].trim().startsWith("|") &&
-        lines[i + 1].trim().endsWith("|")
-      ) {
-        i++;
-        tableLines.push(lines[i].trim());
-      }
-      if (tableLines.length >= 2 && /^\|\s*[-:]+/.test(tableLines[1])) {
-        if (inUl) {
-          output.push("</ul>");
-          inUl = false;
-        }
-        if (inOl) {
-          output.push("</ol>");
-          inOl = false;
-        }
-
-        const headerCells = tableLines[0]
-          .split("|")
-          .slice(1, -1)
-          .map((c) => c.trim());
-        const bodyRows = tableLines.slice(2).map((rowStr) =>
-          rowStr
-            .split("|")
-            .slice(1, -1)
-            .map((c) => c.trim())
+      return (
+        <a
+          href={href}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-cyan-400 underline underline-offset-2 hover:text-cyan-300 font-medium"
+          {...props}
+        >
+          {children}
+        </a>
+      );
+    },
+  },
+  code: {
+    component: ({ children, ...props }: any) => {
+      return (
+        <code
+          className="bg-slate-950 text-cyan-300 px-1 py-0.5 rounded font-mono text-[11px] border border-slate-800"
+          {...props}
+        >
+          {children}
+        </code>
+      );
+    },
+  },
+  strong: {
+    component: ({ children, ...props }: any) => {
+      const str = (Array.isArray(children) ? children.join("") : typeof children === "string" ? children : "").trim();
+      const match = str.match(/^\[?(CRITICAL|HIGH|MEDIUM|LOW)\]?(\s+SEVERITY)?$/i);
+      if (match) {
+        const upper = match[1].toUpperCase();
+        let color = "bg-red-950/80 text-red-300 border-red-700/80";
+        if (upper === "HIGH") color = "bg-amber-950/80 text-amber-300 border-amber-600/80";
+        if (upper === "MEDIUM") color = "bg-yellow-950/80 text-yellow-300 border-yellow-600/80";
+        if (upper === "LOW") color = "bg-blue-950/80 text-blue-300 border-blue-600/80";
+        return (
+          <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold tracking-wider uppercase border ${color} ml-1.5 shadow-sm align-middle`}>
+            {upper} SEVERITY
+          </span>
         );
-
-        let tableHtml =
-          '<div class="overflow-x-auto my-2 rounded border border-slate-800/80 bg-slate-950/70 shadow-sm">';
-        tableHtml += '<table class="w-full text-left text-[11px] font-mono border-collapse">';
-        tableHtml += '<thead><tr class="border-b border-slate-800 bg-slate-900/90 text-cyan-300">';
-        headerCells.forEach((cell) => {
-          tableHtml += `<th class="px-3 py-1.5 font-semibold text-[10px] tracking-wider uppercase text-slate-300">${formatInline(
-            cell
-          )}</th>`;
-        });
-        tableHtml += "</tr></thead>";
-        tableHtml += '<tbody class="divide-y divide-slate-800/60 text-slate-300">';
-        bodyRows.forEach((row) => {
-          tableHtml += '<tr class="hover:bg-slate-900/40 transition-colors">';
-          row.forEach((cell) => {
-            tableHtml += `<td class="px-3 py-1.5 text-slate-200">${formatInline(cell)}</td>`;
-          });
-          tableHtml += "</tr>";
-        });
-        tableHtml += "</tbody></table></div>";
-        output.push(tableHtml);
-        continue;
       }
-    }
-
-    // Unordered list item (- or *)
-    const ulMatch = line.match(/^(\s*)[-*]\s+(.*)$/);
-    if (ulMatch) {
-      if (inOl) {
-        output.push("</ol>");
-        inOl = false;
-      }
-      if (!inUl) {
-        output.push('<ul class="list-disc list-inside space-y-1 my-1 pl-1 text-slate-200">');
-        inUl = true;
-      }
-      output.push(`<li>${formatInline(ulMatch[2])}</li>`);
-      continue;
-    } else if (inUl) {
-      output.push("</ul>");
-      inUl = false;
-    }
-
-    // Ordered list item (1. 2.)
-    const olMatch = line.match(/^(\s*)\d+\.\s+(.*)$/);
-    if (olMatch) {
-      if (inUl) {
-        output.push("</ul>");
-        inUl = false;
-      }
-      if (!inOl) {
-        output.push('<ol class="list-decimal list-inside space-y-1 my-1 pl-1 text-slate-200">');
-        inOl = true;
-      }
-      output.push(`<li>${formatInline(olMatch[2])}</li>`);
-      continue;
-    } else if (inOl) {
-      output.push("</ol>");
-      inOl = false;
-    }
-
-    // Headings
-    if (line.startsWith("### ")) {
-      const headingText = line.slice(4).trim();
-      let iconSvg = "";
-      if (headingText.includes("Welcome to OrgBridge AI") || headingText.includes("Brain")) {
-        iconSvg = EMOJI_TO_SVG["🧠"];
-      } else if (
-        headingText.includes("Live Graph Mutation") ||
-        headingText.includes("Policy Alignment") ||
-        headingText.includes("Real-Time") ||
-        headingText.includes("Alignment Implemented")
-      ) {
-        iconSvg = EMOJI_TO_SVG["⚡"];
-      } else if (headingText.includes("Organizational Silo")) {
-        iconSvg = `<svg class="inline-block w-4 h-4 text-cyan-400 align-text-bottom mr-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>`;
-      } else if (headingText.includes("Policy & Compliance Conflicts")) {
-        iconSvg = `<svg class="inline-block w-4 h-4 text-red-400 align-text-bottom mr-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>`;
-      } else if (headingText.includes("Redundant Microservices")) {
-        iconSvg = `<svg class="inline-block w-4 h-4 text-green-400 align-text-bottom mr-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 0 0 9 9"/></svg>`;
-      } else if (headingText.includes("Decision Lineage")) {
-        iconSvg = `<svg class="inline-block w-4 h-4 text-amber-400 align-text-bottom mr-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>`;
-      } else if (headingText.includes("Warm Introduction Path")) {
-        iconSvg = `<svg class="inline-block w-4 h-4 text-cyan-400 align-text-bottom mr-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>`;
-      } else if (headingText.includes("Top SME Counterpart")) {
-        iconSvg = `<svg class="inline-block w-4 h-4 text-blue-400 align-text-bottom mr-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>`;
-      } else if (headingText.includes("Dynamic FalkorDB Query Result")) {
-        iconSvg = EMOJI_TO_SVG["🔍"];
-      }
-
-      output.push(
-        `<h3 class="flex items-start gap-2 font-bold text-cyan-400 text-sm mt-2 mb-1">` +
-          (iconSvg ? `<span class="shrink-0 mt-0.5 flex items-center">${iconSvg}</span>` : "") +
-          `<span class="flex-1 leading-snug">${formatInline(headingText)}</span>` +
-        `</h3>`
+      return (
+        <strong className="font-bold text-white" {...props}>
+          {children}
+        </strong>
       );
-      continue;
-    }
-    if (line.startsWith("#### ")) {
-      const headingText = line.slice(5).trim();
-      let subIcon = "";
-      if (
-        headingText.toLowerCase().includes("critical") ||
-        headingText.toLowerCase().includes("conflict") ||
-        headingText.toLowerCase().includes("error") ||
-        headingText.toLowerCase().includes("warning")
-      ) {
-        subIcon = EMOJI_TO_SVG["⚠️"];
-      } else if (
-        headingText.toLowerCase().includes("cross-border") ||
-        headingText.toLowerCase().includes("integrated")
-      ) {
-        subIcon = EMOJI_TO_SVG["🔗"];
-      }
-      output.push(
-        `<h4 class="flex items-start gap-1.5 font-semibold text-slate-100 text-xs mt-1.5 mb-0.5">` +
-          (subIcon ? `<span class="shrink-0 mt-0.5 flex items-center">${subIcon}</span>` : "") +
-          `<span class="flex-1 leading-snug">${formatInline(headingText)}</span>` +
-        `</h4>`
-      );
-      continue;
-    }
+    },
+  },
+  table: {
+    component: ({ children, ...props }: any) => (
+      <div className="overflow-x-auto my-2 rounded border border-slate-800/80 bg-slate-950/70 shadow-sm">
+        <table className="w-full text-left text-[11px] font-mono border-collapse" {...props}>
+          {children}
+        </table>
+      </div>
+    ),
+  },
+  thead: {
+    component: ({ children, ...props }: any) => (
+      <thead className="border-b border-slate-800 bg-slate-900/90 text-cyan-300" {...props}>
+        {children}
+      </thead>
+    ),
+  },
+  tbody: {
+    component: ({ children, ...props }: any) => (
+      <tbody className="divide-y divide-slate-800/60 text-slate-300" {...props}>
+        {children}
+      </tbody>
+    ),
+  },
+  tr: {
+    component: ({ children, ...props }: any) => (
+      <tr className="hover:bg-slate-900/40 transition-colors" {...props}>
+        {children}
+      </tr>
+    ),
+  },
+  th: {
+    component: ({ children, ...props }: any) => (
+      <th className="px-3 py-1.5 font-semibold text-[10px] tracking-wider uppercase text-slate-300" {...props}>
+        {children}
+      </th>
+    ),
+  },
+  td: {
+    component: ({ children, ...props }: any) => (
+      <td className="px-3 py-1.5 text-slate-200" {...props}>
+        {children}
+      </td>
+    ),
+  },
+  blockquote: {
+    component: ({ children, ...props }: any) => (
+      <blockquote className="border-l-2 border-cyan-500/80 pl-2.5 my-1.5 text-slate-300 italic text-[11px] bg-slate-900/40 py-1 rounded-r" {...props}>
+        {children}
+      </blockquote>
+    ),
+  },
+  h1: {
+    component: ({ children, ...props }: any) => (
+      <h1 className="font-bold text-cyan-400 text-base mt-2 mb-1" {...props}>
+        {children}
+      </h1>
+    ),
+  },
+  h2: {
+    component: ({ children, ...props }: any) => (
+      <h2 className="font-bold text-cyan-400 text-sm mt-2 mb-1" {...props}>
+        {children}
+      </h2>
+    ),
+  },
+  h3: {
+    component: ({ children, ...props }: any) => (
+      <h3 className="font-bold text-cyan-400 text-sm mt-2 mb-1" {...props}>
+        {children}
+      </h3>
+    ),
+  },
+  h4: {
+    component: ({ children, ...props }: any) => (
+      <h4 className="font-semibold text-slate-100 text-xs mt-1.5 mb-0.5" {...props}>
+        {children}
+      </h4>
+    ),
+  },
+  ul: {
+    component: ({ children, ...props }: any) => (
+      <ul className="list-disc list-inside space-y-1 my-1 pl-1 text-slate-200" {...props}>
+        {children}
+      </ul>
+    ),
+  },
+  ol: {
+    component: ({ children, ...props }: any) => (
+      <ol className="list-decimal list-inside space-y-1 my-1 pl-1 text-slate-200" {...props}>
+        {children}
+      </ol>
+    ),
+  },
+  hr: {
+    component: ({ ...props }: any) => (
+      <hr className="border-slate-700/70 my-2" {...props} />
+    ),
+  },
+  p: {
+    component: ({ children, ...props }: any) => (
+      <p className="leading-relaxed my-1" {...props}>
+        {children}
+      </p>
+    ),
+  },
+};
 
-    // Blockquotes (> becomes &gt;)
-    if (line.startsWith("&gt; ") || line.startsWith("&gt;")) {
-      const bqContent = line.replace(/^&gt;\s?/, "");
-      output.push(
-        `<blockquote class="border-l-2 border-cyan-500/80 pl-2.5 my-1.5 text-slate-300 italic text-[11px] bg-slate-900/40 py-1 rounded-r">${formatInline(
-          bqContent
-        )}</blockquote>`
-      );
-      continue;
-    }
+function SafeMarkdownNodeList({ blocks }: { blocks: ParsedBlock[] }) {
+  return (
+    <>
+      {blocks.map((block, idx) => {
+        if (block.type === "text") {
+          return (
+            <Markdown
+              key={idx}
+              options={{
+                disableParsingRawHTML: true,
+                overrides: safeMarkdownOverrides,
+              }}
+            >
+              {block.content}
+            </Markdown>
+          );
+        } else {
+          return (
+            <details
+              key={idx}
+              className="group my-2.5 border border-slate-800/80 bg-slate-950/60 hover:bg-slate-950/80 rounded-lg overflow-hidden transition-all duration-200 shadow-sm"
+            >
+              <summary className="flex items-center justify-between cursor-pointer select-none px-3 py-2 text-[11px] font-medium text-slate-400 hover:text-cyan-300 bg-slate-900/40 hover:bg-slate-900/70 border-b border-transparent group-open:border-slate-800/70 transition-all">
+                <span className="flex items-center gap-1.5 font-mono">
+                  <Sparkles className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+                  <span>{block.summary || "Thinking & Query Execution"}</span>
+                </span>
+                <span className="text-[10px] text-slate-500 font-mono group-open:rotate-180 transition-transform duration-200">
+                  ▼
+                </span>
+              </summary>
+              <div className="p-3 text-[11px] space-y-2 text-slate-300 font-normal">
+                {block.children && block.children.length > 0 ? (
+                  <SafeMarkdownNodeList blocks={block.children} />
+                ) : (
+                  <Markdown
+                    options={{
+                      disableParsingRawHTML: true,
+                      overrides: safeMarkdownOverrides,
+                    }}
+                  >
+                    {block.content}
+                  </Markdown>
+                )}
+              </div>
+            </details>
+          );
+        }
+      })}
+    </>
+  );
+}
 
-    // Horizontal rules
-    if (/^---|\*\*\*|___$/.test(line.trim())) {
-      output.push('<hr class="border-slate-700/70 my-2" />');
-      continue;
-    }
-
-    // Paragraph gaps
-    if (!line.trim()) {
-      output.push('<div class="h-1.5"></div>');
-      continue;
-    }
-
-    // Regular line
-    output.push(`<p class="leading-relaxed">${formatInline(line)}</p>`);
-  }
-
-  if (inUl) output.push("</ul>");
-  let finalHtml = output.join("");
-  finalHtml = finalHtml.replace(/<p[^>]*>___DETAILS_BLOCK_(\d+)___<\/p>/g, (_, idx) => detailsBlocks[Number(idx)] || "");
-  finalHtml = finalHtml.replace(/___DETAILS_BLOCK_(\d+)___/g, (_, idx) => detailsBlocks[Number(idx)] || "");
-  return finalHtml;
+function SafeMarkdownRenderer({ text }: { text: string }) {
+  if (!text) return null;
+  // Pre-process stand-alone severity badges like [CRITICAL] or `[HIGH]` into **[CRITICAL]** for rich rendering
+  const formatted = text.replace(/`?\[(CRITICAL|HIGH|MEDIUM|LOW)\]`?(?!\()/gi, "**[$1]**");
+  const blocks = parseDetailsBlocks(formatted);
+  return <SafeMarkdownNodeList blocks={blocks} />;
 }
 
 interface ChatPanelProps {
@@ -790,20 +790,14 @@ export default function ChatPanel({
                     <div className="p-1 rounded-md bg-red-900/50 text-red-400 border border-red-700/60 shrink-0 mt-0.5">
                       <ShieldAlert className="w-4 h-4 text-red-400" />
                     </div>
-                    <div
-                      className="space-y-1 break-words text-red-200 flex-1 leading-relaxed"
-                      dangerouslySetInnerHTML={{
-                        __html: renderSafeMarkdown(m.text.replace(/^⚠️\s*/, "")),
-                      }}
-                    />
+                    <div className="space-y-1 break-words text-red-200 flex-1 leading-relaxed">
+                      <SafeMarkdownRenderer text={m.text.replace(/^⚠️\s*/, "")} />
+                    </div>
                   </div>
                 ) : (
-                  <div
-                    className="space-y-1.5 break-words"
-                    dangerouslySetInnerHTML={{
-                      __html: renderSafeMarkdown(m.text),
-                    }}
-                  />
+                  <div className="space-y-1.5 break-words">
+                    <SafeMarkdownRenderer text={m.text} />
+                  </div>
                 )}
 
                 {m.subgraph && m.subgraph.nodes.length > 0 && (

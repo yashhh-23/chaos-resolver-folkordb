@@ -116,17 +116,23 @@ export default function GraphCanvas({
     return new Set(activeSubgraph.nodes.map((n) => n.id));
   }, [activeSubgraph]);
 
+  const SYMMETRIC_REL_TYPES = useMemo(() => new Set(["CONFLICTS_WITH", "REDUNDANT_WITH"]), []);
+
   const activeEdgeKeys = useMemo(() => {
     if (!activeSubgraph?.edges) return new Set<string>();
     const keys = new Set<string>();
     for (const e of activeSubgraph.edges) {
       const sId = getEndpointId(e.source);
       const tId = getEndpointId(e.target);
+      // Preserve actual directed edge key (source -> target)
       keys.add(`${sId}->${tId}`);
-      keys.add(`${tId}->${sId}`);
+      // Only treat explicitly symmetric relationships as bidirectional; directed relationships (OWNS, GOVERNED_BY, SUPERSEDES, etc.) strictly preserve stored direction
+      if (e.rel_type && SYMMETRIC_REL_TYPES.has(e.rel_type)) {
+        keys.add(`${tId}->${sId}`);
+      }
     }
     return keys;
-  }, [activeSubgraph]);
+  }, [activeSubgraph, SYMMETRIC_REL_TYPES]);
 
   // Filter and sanitize graph data so disconnected links never cause D3 simulation crash
   const displayData = useMemo(() => {
@@ -394,8 +400,14 @@ export default function GraphCanvas({
           const tId = getEndpointId(link.target);
           return activeEdgeKeys.has(`${sId}->${tId}`) ? 3 : 1.2;
         }}
-        linkDirectionalArrowLength={4}
-        linkDirectionalArrowRelPos={0.9}
+        linkDirectionalArrowLength={(link: any) => {
+          const sId = getEndpointId(link.source);
+          const tId = getEndpointId(link.target);
+          const isHighlighted = activeEdgeKeys.size === 0 || activeEdgeKeys.has(`${sId}->${tId}`);
+          return isHighlighted ? 6 : 3.5;
+        }}
+        linkDirectionalArrowRelPos={0.93}
+        linkDirectionalArrowColor={getEdgeColor}
         linkDirectionalParticles={(link: any) => {
           const sId = getEndpointId(link.source);
           const tId = getEndpointId(link.target);
