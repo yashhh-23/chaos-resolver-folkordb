@@ -342,8 +342,11 @@ class LLMAgent:
 
         # 2. Warm Intro Path
         if any(k in lower for k in ["intro", "connect", "path", "reach", "introduce", "warm"]):
-            # Extract names if present
-            between_match = re.search(r'(?:between|from)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s+(?:and|to)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)', user_prompt, re.I)
+            between_match = re.search(
+                r'(?:between|from|connect|intro\s+for|introduce)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s+(?:and|to|with)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)',
+                user_prompt,
+                re.I,
+            )
             if between_match:
                 p_a, p_b = between_match.group(1).strip(), between_match.group(2).strip()
             else:
