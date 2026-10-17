@@ -67,10 +67,22 @@ function formatToolBadge(name?: string): string {
   return TOOL_DISPLAY_NAMES[name] || name.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+function formatSeverityBadge(sev: string): string {
+  const upper = sev.toUpperCase();
+  let color = "bg-red-950/80 text-red-300 border-red-700/80";
+  if (upper === "HIGH") color = "bg-amber-950/80 text-amber-300 border-amber-600/80";
+  if (upper === "MEDIUM") color = "bg-yellow-950/80 text-yellow-300 border-yellow-600/80";
+  if (upper === "LOW") color = "bg-blue-950/80 text-blue-300 border-blue-600/80";
+  return `<span class="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold tracking-wider uppercase border ${color} ml-1.5 shadow-sm align-middle">${upper} SEVERITY</span>`;
+}
+
 function formatInline(str: string): string {
+  // Convert `[HIGH]`, `[CRITICAL]`, [HIGH], [CRITICAL] into styled enterprise badges
+  let processed = str.replace(/`?\[(CRITICAL|HIGH|MEDIUM|LOW)\]`?/gi, (_, sev) => formatSeverityBadge(sev));
+
   const codeSpans: string[] = [];
   // 1. Extract inline code spans and replace with placeholder to protect internal asterisks/brackets
-  let processed = str.replace(/`([^`]+)`/g, (_, code) => {
+  processed = processed.replace(/`([^`]+)`/g, (_, code) => {
     const idx = codeSpans.length;
     codeSpans.push(
       `<code class="bg-slate-950 text-cyan-300 px-1 py-0.5 rounded font-mono text-[11px] border border-slate-800">${code}</code>`

@@ -119,7 +119,7 @@ class LLMAgent:
                     "properties": {
                         "query": {
                             "type": "string",
-                            "description": "Read-only Cypher query. Example: 'MATCH (p:Person) WHERE toLower(p.name) CONTAINS \"aarav\" OPTIONAL MATCH (p)-[:MEMBER_OF]->(t:Team) RETURN p.name, p.role, t.name LIMIT 10'. Always return informative properties like p.name, p.role, p.department, and t.name to clearly answer the user's question.",
+                            "description": "Read-only Cypher query. Example: 'MATCH (p:Person) WHERE toLower(p.name) CONTAINS \"diya\" OPTIONAL MATCH (p)-[:MEMBER_OF]->(t:Team) RETURN p.name, p.role, p.department, p.company_origin, t.name LIMIT 10'. ALWAYS include p.company_origin (contains 'FinPay' or 'Vaultly') so the person's company is explicitly known.",
                         },
                         "explanation": {
                             "type": "string",
@@ -174,8 +174,9 @@ class LLMAgent:
                             f"User Question: '{user_prompt}'\n"
                             f"Database Records: {json.dumps(dict_rows, default=str)}\n\n"
                             f"Provide a direct, natural, executive 1-sentence answer to the user's question based on these records. "
-                            f"Do NOT mention 'database', 'Cypher', 'query', 'returned', or 'rows'. "
-                            f"Directly state the answer (e.g. \"Aarav Mehta's role is Staff Security Engineer in the FinPay Security Architecture team.\")."
+                            f"MANDATORY REQUIREMENT: Always explicitly specify the person's company affiliation (from company_origin, e.g. 'of Vaultly company' or 'of FinPay company') along with their role, team, and department.\n"
+                            f"Example format: \"Diya Nair is a Senior Backend Developer on the Vaultly Growth & Identity team within the Identity & Growth department of Vaultly company.\"\n"
+                            f"Do NOT mention 'database', 'Cypher', 'query', 'returned', or 'rows'."
                         )
                         synth_res = client.chat.completions.create(
                             model=self.model,
@@ -197,10 +198,30 @@ class LLMAgent:
                     first_row = rows[0]
                     if headers and len(first_row) == len(headers):
                         row_map = {str(h): first_row[idx] for idx, h in enumerate(headers)}
-                        name = row_map.get("p.name") or row_map.get("name")
-                        role = row_map.get("p.role") or row_map.get("role") or row_map.get("t.name")
-                        if name and role:
-                            friendly_answer = f"{name}'s role is {role}."
+                        name = row_map.get("p.name") or row_map.get("name") or "The requested person"
+                        role = row_map.get("p.role") or row_map.get("role") or ""
+                        dept = row_map.get("p.department") or row_map.get("department") or ""
+                        company = (
+                            row_map.get("p.company_origin")
+                            or row_map.get("company_origin")
+                            or row_map.get("p.company")
+                            or row_map.get("company")
+                            or ""
+                        )
+                        team = row_map.get("t.name") or row_map.get("team") or ""
+
+                        parts = [name]
+                        if role:
+                            parts.append(f"is a {role}")
+                        if team:
+                            parts.append(f"on the {team} team")
+                        if dept:
+                            parts.append(f"within the {dept} department")
+                        if company:
+                            parts.append(f"of {company} company")
+
+                        if len(parts) > 1:
+                            friendly_answer = " ".join(parts) + "."
                         else:
                             friendly_answer = f"Found {len(rows)} record(s) matching your request."
                     else:
@@ -323,7 +344,7 @@ class LLMAgent:
             f"4. trace_decision_lineage: Traces architecture decisions, opposing decisions, and RFC sources.\n"
             f"5. get_warm_intro_path: Discovers shortest organizational bridges between engineers.\n"
             f"6. detect_organizational_silos: Computes Weakly Connected Components (WCC) to isolate disconnected islands.\n"
-            f"7. run_schema_constrained_cypher: Executes ad-hoc read-only Cypher using only verified labels.\n\n"
+            f"7. run_schema_constrained_cypher: Executes ad-hoc read-only Cypher using only verified labels. When querying people, teams, or systems, ALWAYS query and return p.company_origin (e.g. 'FinPay' or 'Vaultly') along with role, department, and team names.\n\n"
             f"Always prioritize tool calls to answer questions with verifiable graph data."
         )
 
