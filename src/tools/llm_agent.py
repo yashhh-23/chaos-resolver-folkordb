@@ -34,6 +34,79 @@ except ImportError:
     OpenAI = None
 
 
+# ---------------------------------------------------------------------------
+# Domain guardrail
+# ---------------------------------------------------------------------------
+_IN_SCOPE_KEYWORDS = [
+    # people / org
+    "expert", "sme", "who", "counterpart", "engineer", "person", "people", "team",
+    "member", "org", "department", "finpay", "vaultly", "merger", "m&a", "acquisition",
+    "employee", "staff", "lead", "manager", "role",
+    # systems / tech
+    "system", "service", "microservice", "api", "gateway", "auth", "authentication",
+    "authorization", "jwt", "token", "sso", "identity", "oauth", "saml",
+    "ledger", "payment", "kyc", "compliance", "audit", "log", "retention",
+    "data", "database", "graph", "falkordb", "cypher", "query",
+    # policies / decisions
+    "policy", "conflict", "contradict", "clash", "redundan", "overlap",
+    "decision", "lineage", "rfc", "adl", "architecture", "govern",
+    "regulation", "pci", "gdpr", "sox", "hipaa",
+    # warm intro / silos
+    "intro", "introduce", "path", "connect", "bridge", "silo", "island",
+    "isolated", "wcc", "component", "topology", "cluster",
+    # general graph / org-brain context
+    "orgbridge", "knowledge", "graph", "incident", "on-call", "oncall",
+    "ownership", "owns", "responsible", "stakeholder",
+]
+
+_OUT_OF_SCOPE_PATTERNS = [
+    r"\bjava\b", r"\bpython\b", r"\bjavascript\b", r"\bc\+\+\b", r"\brust\b",
+    r"\bhtml\b", r"\bcss\b", r"\bsql\b(?!\s*(query|schema))",
+    r"\brecip\b", r"\bcook\b", r"\bfood\b", r"\bweather\b",
+    r"\bsport\b", r"\bfootball\b", r"\bcricket\b", r"\bbasketball\b",
+    r"\bmovie\b", r"\bfilm\b", r"\bsong\b", r"\bmusic\b",
+    r"\bnews\b", r"\bpolitic\b", r"\belection\b",
+    r"\bmath\b", r"\balgebra\b", r"\bcalculus\b",
+    r"\bhistory\b", r"\bgeograph\b", r"\bscience\b(?!\s*of)",
+    r"\bpoem\b", r"\bstory\b", r"\bessay\b", r"\bwrite\s+a\b",
+    r"\btranslat\b", r"\blanguage\b(?!\s*model)",
+    r"\bmedical\b", r"\bdoctor\b", r"\bhospital\b",
+    r"\btravel\b", r"\bhotel\b", r"\bflight\b",
+    r"\bjoke\b", r"\bfunny\b",
+]
+
+_REFUSAL_RESPONSE = (
+    "I'm **OrgBridge AI** — the M&A Chaos Resolver for the FinPay ↔ Vaultly merger. "
+    "My knowledge is strictly limited to the enterprise graph: people, teams, systems, "
+    "policies, decisions, and organizational topology stored in FalkorDB.\n\n"
+    "I can help with:\n"
+    "- 🔍 **Expert discovery** — find SMEs and counterparts across both companies\n"
+    "- ⚠️ **Policy conflicts** — detect contradictions in compliance and security policies\n"
+    "- 🔄 **Redundant systems** — identify overlapping microservices\n"
+    "- 📜 **Decision lineage** — trace architecture decisions and RFC sources\n"
+    "- 🤝 **Warm intro paths** — find shortest organizational bridges between engineers\n"
+    "- 🏝️ **Organizational silos** — detect disconnected teams and isolated units\n\n"
+    "Please ask a question related to the merger, the org graph, or the systems and people in it."
+)
+
+
+def _is_in_scope(prompt: str) -> bool:
+    """Returns True if the prompt is likely within the M&A org-graph domain."""
+    lower = prompt.lower()
+
+    # Explicit out-of-scope pattern check (fast fail)
+    for pat in _OUT_OF_SCOPE_PATTERNS:
+        if re.search(pat, lower):
+            return False
+
+    # Must contain at least one in-scope keyword to be allowed
+    for kw in _IN_SCOPE_KEYWORDS:
+        if kw in lower:
+            return True
+
+    return False
+
+
 def get_live_graph_schema(graph_name: str) -> Dict[str, List[str]]:
     """Inspects live labels and relationship types directly from FalkorDB."""
     graph = db_client.get_graph(graph_name)
@@ -412,6 +485,17 @@ class LLMAgent:
 
     def _fallback_deterministic_dispatch(self, user_prompt: str, graph_name: str) -> ToolResult:
         """Offline deterministic intent router when no LLM API key is present."""
+        # Guardrail: reject out-of-scope prompts even in offline/fallback mode
+        if not _is_in_scope(user_prompt):
+            logger.info(f"Guardrail (fallback): out-of-scope prompt blocked: {user_prompt[:80]!r}")
+            return ToolResult(
+                tool_name="guardrail",
+                status="out_of_scope",
+                text_answer=_REFUSAL_RESPONSE,
+                details={"reason": "prompt_outside_domain"},
+                subgraph=Subgraph(),
+            )
+
         lower = user_prompt.lower()
         tools = GraphAgentTools(graph_name=graph_name)
 
@@ -468,15 +552,43 @@ class LLMAgent:
         """Processes a natural language prompt via Groq Llama-3.3-70B or deterministic fallback."""
         target_graph = graph_name or settings.graph_merged
 
+        # ---------------------------------------------------------------
+        # GUARDRAIL LAYER 1: Pre-flight domain scope check
+        # Reject queries that are clearly outside the M&A org-graph domain
+        # before any LLM call is made — zero hallucination risk.
+        # ---------------------------------------------------------------
+        if not _is_in_scope(user_prompt):
+            logger.info(f"Guardrail: out-of-scope prompt blocked: {user_prompt[:80]!r}")
+            return ToolResult(
+                tool_name="guardrail",
+                status="out_of_scope",
+                text_answer=_REFUSAL_RESPONSE,
+                details={"reason": "prompt_outside_domain"},
+                subgraph=Subgraph(),
+            )
+
         if not self.is_available():
             logger.info("GROQ_API_KEY unset; delegating to deterministic graph tools.")
             return self._fallback_deterministic_dispatch(user_prompt, target_graph)
 
         # Retrieve dynamic live schema
         schema = get_live_graph_schema(target_graph)
+
+        # ---------------------------------------------------------------
+        # GUARDRAIL LAYER 2: Hardened system prompt with explicit domain
+        # boundaries and mandatory refusal instruction.
+        # ---------------------------------------------------------------
         system_prompt = (
             f"You are OrgBridge AI (The M&A Chaos Resolver), an autonomous corporate brain running on Groq LPU inference and powered by FalkorDB.\n"
             f"If asked about your architecture or whether Groq is used, confirm that you run on Groq for ultra-fast LPU inference and function calling, while all enterprise knowledge graphs and vector embeddings are stored and queried in FalkorDB.\n\n"
+            f"⛔ STRICT DOMAIN BOUNDARY — MANDATORY:\n"
+            f"You ONLY answer questions about the FinPay ↔ Vaultly M&A merger and the enterprise knowledge graph in FalkorDB.\n"
+            f"This includes: people, teams, systems, policies, decisions, compliance, architecture, organizational silos, and warm introduction paths.\n"
+            f"You MUST REFUSE to answer ANY question that is not directly related to the merger, the org graph, or the enterprise systems and people in it.\n"
+            f"If the user asks about general programming, other companies, recipes, sports, news, weather, jokes, history, science, math, travel, or ANY other off-topic subject, "
+            f"respond ONLY with this exact refusal message and nothing else:\n"
+            f"\"{_REFUSAL_RESPONSE}\"\n"
+            f"Do NOT explain, help with, or partially address any off-topic question. Simply return the refusal message.\n\n"
             f"Live FalkorDB Graph Schema for tenant '{target_graph}':\n"
             f"- Allowed Labels: {', '.join(schema['labels'])}\n"
             f"- Allowed Relationships: {', '.join(schema['relationship_types'])}\n\n"
@@ -488,7 +600,8 @@ class LLMAgent:
             f"5. get_warm_intro_path: Discovers shortest organizational bridges between engineers.\n"
             f"6. detect_organizational_silos: Computes Weakly Connected Components (WCC) to isolate disconnected islands.\n"
             f"7. run_schema_constrained_cypher: Executes ad-hoc read-only Cypher using only verified labels. When querying people, teams, or systems, ALWAYS query and return p.company_origin (e.g. 'FinPay' or 'Vaultly') along with role, department, and team names.\n\n"
-            f"Always prioritize tool calls to answer questions with verifiable graph data."
+            f"Always prioritize tool calls to answer questions with verifiable graph data. "
+            f"Never answer from general knowledge — every answer must come from a tool call or graph query."
         )
 
         tools = self._get_tools_spec()
@@ -527,10 +640,33 @@ class LLMAgent:
                 else:
                     return execute_tool(fn_name, fn_args, graph_name=target_graph)
 
-            # Direct response
+            # ---------------------------------------------------------------
+            # GUARDRAIL LAYER 3: Post-flight intercept of direct text responses.
+            # If the LLM chose NOT to call a tool, its direct text response must
+            # be validated. Any response that looks like a refusal or a generic
+            # explanation rather than graph-grounded data is replaced with the
+            # canonical refusal. This stops the LLM from "helpfully" answering
+            # off-topic questions even when the system prompt says not to.
+            # ---------------------------------------------------------------
+            direct_text = (msg.content or "").strip()
+
+            # Re-run the scope check on the LLM's direct response content.
+            # If the LLM's response is long but doesn't call a tool and the
+            # original prompt was borderline, enforce refusal.
+            if not _is_in_scope(user_prompt):
+                logger.warning("Guardrail Layer 3: LLM bypassed tool call on out-of-scope prompt; enforcing refusal.")
+                return ToolResult(
+                    tool_name="guardrail",
+                    status="out_of_scope",
+                    text_answer=_REFUSAL_RESPONSE,
+                    details={"reason": "llm_direct_response_on_oos_prompt"},
+                    subgraph=Subgraph(),
+                )
+
+            # Allow genuine on-scope clarifying responses (e.g. "please specify which team")
             return ToolResult(
                 tool_name="llm_agent",
-                text_answer=msg.content or "No response generated.",
+                text_answer=direct_text or "No response generated.",
                 details={"model": self.model},
                 subgraph=Subgraph(),
             )
