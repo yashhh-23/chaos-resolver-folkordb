@@ -282,7 +282,7 @@ class LLMAgent:
                         graph_name=target_graph,
                     )
                 else:
-                    return execute_tool(fn_name, fn_args)
+                    return execute_tool(fn_name, fn_args, graph_name=target_graph)
 
             # Direct response
             return ToolResult(

@@ -32,6 +32,11 @@ class Settings(BaseSettings):
     auto_linker_domain_bonus: float = 0.05
     auto_linker_max_score: float = 0.99
 
+    # Graph Traversal & Clustering Parameters
+    warm_intro_max_directed_hops: int = 5
+    warm_intro_max_bidirectional_hops: int = 4
+    silos_subgraph_max_nodes: int = 25
+
     # General
     environment: str = "development"
     log_level: str = "INFO"

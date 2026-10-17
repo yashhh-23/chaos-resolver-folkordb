@@ -533,12 +533,12 @@ class GraphAgentTools:
         res = None
         # 1. Attempt FalkorDB native shortestPath (for directed traversals supported by engine)
         try:
-            native_q = """
+            native_q = f"""
                 MATCH (a:Person), (b:Person)
                 WHERE (toLower(a.name) CONTAINS toLower($p_a) OR toLower(a.id) CONTAINS toLower($p_a))
                   AND (toLower(b.name) CONTAINS toLower($p_b) OR toLower(b.id) CONTAINS toLower($p_b))
                 WITH a, b LIMIT 1
-                WITH shortestPath((a)-[*..5]->(b)) as p
+                WITH shortestPath((a)-[*..{settings.warm_intro_max_directed_hops}]->(b)) as p
                 WHERE p IS NOT NULL
                 WITH p, nodes(p) as nds, relationships(p) as rls, length(p) as h
                 RETURN [n in nds | n.id] as node_ids,
@@ -554,14 +554,14 @@ class GraphAgentTools:
         except Exception:
             res = None
 
-        # 2. Seamless fallback to bounded bidirectional path match [*1..4]
+        # 2. Seamless fallback to bounded bidirectional path match
         if not res or not res.result_set:
-            query = """
+            query = f"""
                 MATCH (a:Person) WHERE toLower(a.name) CONTAINS toLower($p_a) OR toLower(a.id) CONTAINS toLower($p_a)
                 WITH a LIMIT 1
                 MATCH (b:Person) WHERE toLower(b.name) CONTAINS toLower($p_b) OR toLower(b.id) CONTAINS toLower($p_b)
                 WITH a, b LIMIT 1
-                MATCH p = (a)-[*1..4]-(b)
+                MATCH p = (a)-[*1..{settings.warm_intro_max_bidirectional_hops}]-(b)
                 WITH p, nodes(p) as nds, relationships(p) as rls, length(p) as h
                 RETURN [n in nds | n.id] as node_ids,
                        [n in nds | coalesce(n.name, n.id)] as node_names,
@@ -715,7 +715,7 @@ class GraphAgentTools:
         for integ in integrated_components:
             for nid in integ["node_ids"]:
                 ninfo = nodes_data.get(nid, {})
-                if ninfo.get("label") in ("Team", "System") and len(subgraph.nodes) < 25:
+                if ninfo.get("label") in ("Team", "System") and len(subgraph.nodes) < settings.silos_subgraph_max_nodes:
                     subgraph.add_node(
                         node_id=nid,
                         name=ninfo.get("name", nid),

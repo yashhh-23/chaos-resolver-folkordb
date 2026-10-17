@@ -6,7 +6,7 @@ import ChatPanel from "@/components/ChatPanel";
 import GraphCanvas from "@/components/GraphCanvas";
 import NodeInspectorModal from "@/components/NodeInspectorModal";
 import { SubgraphData, GraphNode, fetchFullSubgraph, checkBackendHealth } from "@/lib/api";
-import { FALLBACK_STATIC_GRAPH } from "@/lib/fallbackData";
+import { getFallbackGraph } from "@/lib/fallbackData";
 
 export default function WarRoomDashboard() {
   const [graphData, setGraphData] = useState<SubgraphData>({ nodes: [], edges: [] });
@@ -36,11 +36,11 @@ export default function WarRoomDashboard() {
         if (data && data.nodes && data.nodes.length > 0) {
           setGraphData(data);
         } else {
-          setGraphData(FALLBACK_STATIC_GRAPH);
+          setGraphData(getFallbackGraph(selectedGraph));
         }
       } catch (err) {
         console.info("Live backend connection pending, activating curated static preview:", err);
-        setGraphData(FALLBACK_STATIC_GRAPH);
+        setGraphData(getFallbackGraph(selectedGraph));
       } finally {
         setIsLoading(false);
       }
@@ -103,6 +103,7 @@ export default function WarRoomDashboard() {
     <main className="flex h-screen w-screen overflow-hidden bg-slate-950 font-sans">
       {/* Left Panel: Agent Chat & M&A Crisis Prompts */}
       <ChatPanel
+        selectedGraph={selectedGraph}
         onSubgraphUpdate={handleSubgraphUpdate}
         onFullGraphRefresh={handleFullGraphRefresh}
         onBackendHealthy={() => setIsHealthy(true)}

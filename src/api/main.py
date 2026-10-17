@@ -13,9 +13,14 @@ from pydantic import BaseModel, Field
 from src.config import settings
 from src.utils.logger import logger
 from src.db.client import db_client
-from src.tools.graph_tools import agent_tools, ToolResult, Subgraph, fetch_visualization_subgraph
+from src.tools.graph_tools import agent_tools, GraphAgentTools, ToolResult, Subgraph, fetch_visualization_subgraph
 from src.tools.mcp_server import MCP_TOOL_DEFINITIONS, execute_tool
 from src.tools.llm_agent import llm_agent
+
+
+def get_tools(graph_name: Optional[str] = None) -> GraphAgentTools:
+    """Returns a GraphAgentTools instance bound to the requested tenant or default merged_brain."""
+    return GraphAgentTools(graph_name=graph_name) if graph_name else agent_tools
 
 
 app = FastAPI(
@@ -38,19 +43,31 @@ app.add_middleware(
 class ExpertRequest(BaseModel):
     topic: str = Field(..., description="Domain or topic to find expert for", examples=["Authentication"])
     company: str = Field(default="Vaultly", description="Target company", examples=["Vaultly"])
+    graph: Optional[str] = Field(default=None, description="Optional target multigraph tenant", examples=["merged_brain"])
 
 
 class ConflictRequest(BaseModel):
     domain: Optional[str] = Field(default=None, description="Domain to filter conflicts", examples=["Data Retention"])
+    graph: Optional[str] = Field(default=None, description="Optional target multigraph tenant", examples=["merged_brain"])
 
 
 class LineageRequest(BaseModel):
     system_name: str = Field(..., description="Name of the system to trace", examples=["Gatekeeper-Auth"])
+    graph: Optional[str] = Field(default=None, description="Optional target multigraph tenant", examples=["merged_brain"])
 
 
 class WarmIntroRequest(BaseModel):
     person_a: str = Field(..., description="Originating person", examples=["Aarav Mehta"])
     person_b: str = Field(..., description="Target counterpart person", examples=["Diya Nair"])
+    graph: Optional[str] = Field(default=None, description="Optional target multigraph tenant", examples=["merged_brain"])
+
+
+class RedundantRequest(BaseModel):
+    graph: Optional[str] = Field(default=None, description="Optional target multigraph tenant", examples=["merged_brain"])
+
+
+class SilosRequest(BaseModel):
+    graph: Optional[str] = Field(default=None, description="Optional target multigraph tenant", examples=["merged_brain"])
 
 
 class ResolveAuthRequest(BaseModel):
@@ -70,6 +87,7 @@ class MergeTeamsRequest(BaseModel):
 class MCPExecuteRequest(BaseModel):
     tool_name: str
     arguments: Dict[str, Any] = Field(default_factory=dict)
+    graph: Optional[str] = Field(default=None, description="Optional target multigraph tenant", examples=["merged_brain"])
 
 
 class ChatRequest(BaseModel):
@@ -101,7 +119,7 @@ def get_mcp_tools():
 def run_mcp_tool(req: MCPExecuteRequest):
     """Executes an MCP tool dynamically."""
     try:
-        return execute_tool(req.tool_name, req.arguments)
+        return execute_tool(req.tool_name, req.arguments, graph_name=req.graph)
     except Exception as e:
         logger.error(f"MCP execution error: {e}")
         raise HTTPException(status_code=400, detail=str(e))
@@ -111,7 +129,8 @@ def run_mcp_tool(req: MCPExecuteRequest):
 def find_counterpart_expert(req: ExpertRequest):
     """Tool 1: Identifies subject-matter expert counterpart using Cypher + PageRank."""
     try:
-        return agent_tools.find_counterpart_expert(topic=req.topic, company=req.company)
+        tools = get_tools(req.graph)
+        return tools.find_counterpart_expert(topic=req.topic, company=req.company)
     except Exception as e:
         logger.error(f"Error in find_counterpart_expert: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -121,17 +140,19 @@ def find_counterpart_expert(req: ExpertRequest):
 def detect_policy_conflicts(req: ConflictRequest):
     """Tool 2: Detects conflicting compliance policies and traces source lineage."""
     try:
-        return agent_tools.detect_policy_conflicts(domain=req.domain)
+        tools = get_tools(req.graph)
+        return tools.detect_policy_conflicts(domain=req.domain)
     except Exception as e:
         logger.error(f"Error in detect_policy_conflicts: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/tools/find-redundant-systems", response_model=ToolResult)
-def find_redundant_systems():
+def find_redundant_systems(req: Optional[RedundantRequest] = None):
     """Tool 3: Finds overlapping microservices via hybrid vector + graph similarity."""
     try:
-        return agent_tools.find_redundant_systems()
+        tools = get_tools(req.graph if req else None)
+        return tools.find_redundant_systems()
     except Exception as e:
         logger.error(f"Error in find_redundant_systems: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -141,7 +162,8 @@ def find_redundant_systems():
 def trace_decision_lineage(req: LineageRequest):
     """Tool 4: Traces governing decisions, counterpart conflicts, and documentation lineage."""
     try:
-        return agent_tools.trace_decision_lineage(system_name=req.system_name)
+        tools = get_tools(req.graph)
+        return tools.trace_decision_lineage(system_name=req.system_name)
     except Exception as e:
         logger.error(f"Error in trace_decision_lineage: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -151,17 +173,19 @@ def trace_decision_lineage(req: LineageRequest):
 def get_warm_intro_path(req: WarmIntroRequest):
     """Tool 5: Computes shortest warm introduction path between engineers across companies."""
     try:
-        return agent_tools.get_warm_intro_path(person_a=req.person_a, person_b=req.person_b)
+        tools = get_tools(req.graph)
+        return tools.get_warm_intro_path(person_a=req.person_a, person_b=req.person_b)
     except Exception as e:
         logger.error(f"Error in get_warm_intro_path: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/tools/detect-silos", response_model=ToolResult)
-def detect_organizational_silos():
+def detect_organizational_silos(req: Optional[SilosRequest] = None):
     """Tool 6: Discovers isolated organizational islands and silos across FinPay and Vaultly (WCC)."""
     try:
-        return agent_tools.detect_organizational_silos()
+        tools = get_tools(req.graph if req else None)
+        return tools.detect_organizational_silos()
     except Exception as e:
         logger.error(f"Error in detect_organizational_silos: {e}")
         raise HTTPException(status_code=500, detail=str(e))

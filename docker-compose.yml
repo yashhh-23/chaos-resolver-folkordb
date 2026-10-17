@@ -5,7 +5,7 @@ services:
     image: falkordb/falkordb:latest
     container_name: falkordb-m-and-a
     ports:
-      - "6379:6379"
+      - "${FALKORDB_PORT:-6379}:6379"
     volumes:
       - falkordb-data:/data
     restart: unless-stopped

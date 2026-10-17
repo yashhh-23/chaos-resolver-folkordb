@@ -175,3 +175,64 @@ export const FALLBACK_STATIC_GRAPH: SubgraphData = {
     },
   ],
 };
+
+/**
+ * Returns isolated tenant subgraphs or unified merged graph for offline mode.
+ */
+export function getFallbackGraph(selectedGraph: string = "merged_brain"): SubgraphData {
+  if (selectedGraph === "finpay_graph") {
+    const finpayNodes = FALLBACK_STATIC_GRAPH.nodes.filter((n) => n.company_origin === "FinPay");
+    const finpayNodeIds = new Set(finpayNodes.map((n) => n.id));
+
+    const validEdges = FALLBACK_STATIC_GRAPH.edges.filter((e) => {
+      const src = typeof e.source === "string" ? e.source : e.source.id;
+      const tgt = typeof e.target === "string" ? e.target : e.target.id;
+      return (
+        (finpayNodeIds.has(src) || finpayNodeIds.has(tgt)) &&
+        !src.startsWith("vaultly:") &&
+        !tgt.startsWith("vaultly:")
+      );
+    });
+
+    const connectedNodeIds = new Set<string>();
+    validEdges.forEach((e) => {
+      connectedNodeIds.add(typeof e.source === "string" ? e.source : e.source.id);
+      connectedNodeIds.add(typeof e.target === "string" ? e.target : e.target.id);
+    });
+
+    const nodes = FALLBACK_STATIC_GRAPH.nodes.filter(
+      (n) => n.company_origin === "FinPay" || (n.company_origin === "External" && connectedNodeIds.has(n.id))
+    );
+
+    return { nodes, edges: validEdges };
+  }
+
+  if (selectedGraph === "vaultly_graph") {
+    const vaultlyNodes = FALLBACK_STATIC_GRAPH.nodes.filter((n) => n.company_origin === "Vaultly");
+    const vaultlyNodeIds = new Set(vaultlyNodes.map((n) => n.id));
+
+    const validEdges = FALLBACK_STATIC_GRAPH.edges.filter((e) => {
+      const src = typeof e.source === "string" ? e.source : e.source.id;
+      const tgt = typeof e.target === "string" ? e.target : e.target.id;
+      return (
+        (vaultlyNodeIds.has(src) || vaultlyNodeIds.has(tgt)) &&
+        !src.startsWith("finpay:") &&
+        !tgt.startsWith("finpay:")
+      );
+    });
+
+    const connectedNodeIds = new Set<string>();
+    validEdges.forEach((e) => {
+      connectedNodeIds.add(typeof e.source === "string" ? e.source : e.source.id);
+      connectedNodeIds.add(typeof e.target === "string" ? e.target : e.target.id);
+    });
+
+    const nodes = FALLBACK_STATIC_GRAPH.nodes.filter(
+      (n) => n.company_origin === "Vaultly" || (n.company_origin === "External" && connectedNodeIds.has(n.id))
+    );
+
+    return { nodes, edges: validEdges };
+  }
+
+  return FALLBACK_STATIC_GRAPH;
+}

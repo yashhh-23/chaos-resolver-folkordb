@@ -4,8 +4,8 @@ Exposes the 5 deterministic FalkorDB tools in standard JSON-Schema format
 for autonomous LLM agents (Groq Llama-3.3-70B / OpenAI / Anthropic).
 """
 
-from typing import Dict, Any, List
-from src.tools.graph_tools import agent_tools, ToolResult
+from typing import Dict, Any, List, Optional
+from src.tools.graph_tools import agent_tools, GraphAgentTools, ToolResult
 
 MCP_TOOL_DEFINITIONS: List[Dict[str, Any]] = [
     {
@@ -92,30 +92,31 @@ MCP_TOOL_DEFINITIONS: List[Dict[str, Any]] = [
 ]
 
 
-def execute_tool(tool_name: str, arguments: Dict[str, Any]) -> ToolResult:
-    """Dispatches tool execution dynamically based on tool name."""
+def execute_tool(tool_name: str, arguments: Dict[str, Any], graph_name: Optional[str] = None) -> ToolResult:
+    """Dispatches tool execution dynamically based on tool name and optional target graph."""
+    tools = GraphAgentTools(graph_name=graph_name) if graph_name else agent_tools
     if tool_name == "find_counterpart_expert":
-        return agent_tools.find_counterpart_expert(
+        return tools.find_counterpart_expert(
             topic=arguments.get("topic", ""),
             company=arguments.get("company", "Vaultly"),
         )
     elif tool_name == "detect_policy_conflicts":
-        return agent_tools.detect_policy_conflicts(
+        return tools.detect_policy_conflicts(
             domain=arguments.get("domain"),
         )
     elif tool_name == "find_redundant_systems":
-        return agent_tools.find_redundant_systems()
+        return tools.find_redundant_systems()
     elif tool_name == "trace_decision_lineage":
-        return agent_tools.trace_decision_lineage(
+        return tools.trace_decision_lineage(
             system_name=arguments.get("system_name", ""),
         )
     elif tool_name == "get_warm_intro_path":
-        return agent_tools.get_warm_intro_path(
+        return tools.get_warm_intro_path(
             person_a=arguments.get("person_a", ""),
             person_b=arguments.get("person_b", ""),
         )
     elif tool_name == "detect_organizational_silos":
-        return agent_tools.detect_organizational_silos()
+        return tools.detect_organizational_silos()
     else:
         raise ValueError(f"Unknown MCP tool: {tool_name}")
 

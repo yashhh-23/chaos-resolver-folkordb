@@ -261,6 +261,7 @@ function renderSafeMarkdown(text: string): string {
 }
 
 interface ChatPanelProps {
+  selectedGraph?: string;
   onSubgraphUpdate: (subgraph: SubgraphData | null) => void;
   onFullGraphRefresh?: (freshData?: SubgraphData) => Promise<void> | void;
   onBackendHealthy?: () => void;
@@ -315,6 +316,7 @@ const CRISIS_PROMPTS = [
 
 
 export default function ChatPanel({
+  selectedGraph = "merged_brain",
   onSubgraphUpdate,
   onFullGraphRefresh,
   onBackendHealthy,
@@ -376,7 +378,7 @@ export default function ChatPanel({
     setIsLoading(true);
 
     try {
-      const res: ToolResponse = await callTool(crisis.endpoint, crisis.payload);
+      const res: ToolResponse = await callTool(crisis.endpoint, { ...crisis.payload, graph: selectedGraph });
       onBackendHealthy?.();
       const agentMsg: Message = {
         id: (Date.now() + 1).toString(),
@@ -672,11 +674,11 @@ export default function ChatPanel({
       let res: ToolResponse;
       try {
         // Primary path: Autonomous Groq Llama-3.3-70B agent + Schema-Constrained Cypher (/api/chat)
-        res = await chatWithAgent(userText);
+        res = await chatWithAgent(userText, selectedGraph);
         onBackendHealthy?.();
       } catch (agentErr) {
         // Fallback path: Deterministic client-side tool routing if /api/chat is unreachable
-        res = await callTool(endpoint, payload);
+        res = await callTool(endpoint, { ...payload, graph: selectedGraph });
         onBackendHealthy?.();
       }
 
