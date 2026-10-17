@@ -620,9 +620,6 @@ export default function ChatPanel({
             <h1 className="font-bold text-base text-slate-100 tracking-tight">
               OrgBridge AI
             </h1>
-            <span className="text-[10px] font-semibold bg-indigo-500/20 text-indigo-300 px-1.5 py-0.5 rounded border border-indigo-500/30">
-              Track 03
-            </span>
           </div>
           <p className="text-xs text-slate-400 mt-0.5">
             The M&A Chaos Resolver — FalkorDB Brain
@@ -668,12 +665,12 @@ export default function ChatPanel({
         </div>
       </div>
 
-      {/* Executive Alignment Actions (Track 03 Hardening) */}
+      {/* Executive Alignment Actions */}
       <div className="p-3 bg-slate-950/70 border-b border-slate-800/80">
         <div className="flex items-center justify-between mb-2">
           <p className="text-[11px] font-semibold uppercase tracking-wider text-amber-400 flex items-center gap-1">
             <Zap className="w-3.5 h-3.5 text-amber-400" />
-            Executive Alignment Actions (Track 03)
+            Executive Alignment Actions
           </p>
           <span className="text-[10px] text-slate-400">Real-Time Knowledge Updates</span>
         </div>
