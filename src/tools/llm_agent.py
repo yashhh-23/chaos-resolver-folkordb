@@ -119,7 +119,7 @@ class LLMAgent:
                     "properties": {
                         "query": {
                             "type": "string",
-                            "description": "Read-only Cypher query (e.g. 'MATCH (p:Person)-[:OWNS]->(s:System) RETURN p.name, s.name LIMIT 10')",
+                            "description": "Read-only Cypher query. Example: 'MATCH (p:Person) WHERE toLower(p.name) CONTAINS \"aarav\" OPTIONAL MATCH (p)-[:MEMBER_OF]->(t:Team) RETURN p.name, p.role, t.name LIMIT 10'. Always return informative properties like p.name, p.role, p.department, and t.name to clearly answer the user's question.",
                         },
                         "explanation": {
                             "type": "string",
@@ -132,7 +132,13 @@ class LLMAgent:
         })
         return specs
 
-    def _execute_cypher(self, query: str, explanation: str, graph_name: str) -> ToolResult:
+    def _execute_cypher(
+        self,
+        query: str,
+        explanation: str,
+        graph_name: str,
+        user_prompt: str = "",
+    ) -> ToolResult:
         """Executes a schema-constrained, sanitized Cypher query and formats the result."""
         # Enforce read-only constraint
         upper = query.upper()
@@ -152,11 +158,60 @@ class LLMAgent:
         try:
             res = graph.query(sanitized)
             rows = res.result_set
-            headers = [h[1] if isinstance(h, tuple) else str(h) for h in res.header] if hasattr(res, "header") and res.header else []
+            headers = [h[1] if isinstance(h, (tuple, list)) and len(h) > 1 else str(h) for h in res.header] if hasattr(res, "header") and res.header else []
 
-            # Format tabular answer
-            lines = [
-                f"### Dynamic FalkorDB Query Result\n",
+            # 1. Synthesize concise executive user-friendly answer
+            friendly_answer = ""
+            if rows:
+                if self.is_available() and user_prompt:
+                    try:
+                        client = self.groq_client or self.openai_client
+                        dict_rows = [
+                            {str(headers[i] if i < len(headers) else f"col_{i}"): val for i, val in enumerate(row)}
+                            for row in rows[:10]
+                        ]
+                        synth_prompt = (
+                            f"User Question: '{user_prompt}'\n"
+                            f"Database Records: {json.dumps(dict_rows, default=str)}\n\n"
+                            f"Provide a direct, natural, executive 1-sentence answer to the user's question based on these records. "
+                            f"Do NOT mention 'database', 'Cypher', 'query', 'returned', or 'rows'. "
+                            f"Directly state the answer (e.g. \"Aarav Mehta's role is Staff Security Engineer in the FinPay Security Architecture team.\")."
+                        )
+                        synth_res = client.chat.completions.create(
+                            model=self.model,
+                            messages=[
+                                {
+                                    "role": "system",
+                                    "content": "You are OrgBridge AI, an executive assistant synthesizing concise, natural answers from verified enterprise graph data.",
+                                },
+                                {"role": "user", "content": synth_prompt},
+                            ],
+                            temperature=0.1,
+                            max_tokens=150,
+                        )
+                        friendly_answer = (synth_res.choices[0].message.content or "").strip()
+                    except Exception as synth_err:
+                        logger.debug("Failed to synthesize friendly Cypher answer with LLM: %s", synth_err)
+
+                if not friendly_answer:
+                    first_row = rows[0]
+                    if headers and len(first_row) == len(headers):
+                        row_map = {str(h): first_row[idx] for idx, h in enumerate(headers)}
+                        name = row_map.get("p.name") or row_map.get("name")
+                        role = row_map.get("p.role") or row_map.get("role") or row_map.get("t.name")
+                        if name and role:
+                            friendly_answer = f"{name}'s role is {role}."
+                        else:
+                            friendly_answer = f"Found {len(rows)} record(s) matching your request."
+                    else:
+                        friendly_answer = f"Found {len(rows)} record(s) matching your request."
+            else:
+                friendly_answer = f"No matching records found in the organization graph for '{user_prompt or explanation}'."
+
+            # 2. Format technical details under collapsible Thinking dropdown
+            thinking_lines = [
+                "<details class=\"thinking-dropdown\">",
+                "<summary>Thinking & Query Execution</summary>\n",
                 f"**Cypher**: `{sanitized}`\n",
                 f"**Purpose**: *{explanation}*\n",
                 f"**Returned**: {len(rows)} record(s)\n",
@@ -166,19 +221,23 @@ class LLMAgent:
                 if headers:
                     header_line = "| " + " | ".join(str(h) for h in headers) + " |"
                     sep_line = "| " + " | ".join("---" for _ in headers) + " |"
-                    lines.extend([header_line, sep_line])
+                    thinking_lines.extend([header_line, sep_line])
                     for row in rows[:15]:
-                        lines.append("| " + " | ".join(str(val) for val in row) + " |")
+                        thinking_lines.append("| " + " | ".join(str(val) for val in row) + " |")
                 else:
                     for row in rows[:15]:
-                        lines.append(f"- {row}")
+                        thinking_lines.append(f"- {row}")
             else:
-                lines.append("*Query returned 0 matching records in the graph.*")
+                thinking_lines.append("*Query returned 0 matching records in the graph.*")
+
+            thinking_lines.append("</details>")
+
+            full_text = f"{friendly_answer}\n\n" + "\n".join(thinking_lines)
 
             return ToolResult(
                 tool_name="schema_constrained_cypher",
-                text_answer="\n".join(lines),
-                details={"query": sanitized, "row_count": len(rows)},
+                text_answer=full_text,
+                details={"query": sanitized, "row_count": len(rows), "summary": friendly_answer},
                 subgraph=subgraph,
             )
         except Exception as e:
@@ -299,6 +358,7 @@ class LLMAgent:
                         query=fn_args.get("query", ""),
                         explanation=fn_args.get("explanation", "Dynamic schema-constrained query"),
                         graph_name=target_graph,
+                        user_prompt=user_prompt,
                     )
                 else:
                     return execute_tool(fn_name, fn_args, graph_name=target_graph)

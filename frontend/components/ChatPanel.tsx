@@ -104,10 +104,36 @@ function formatInline(str: string): string {
 function renderSafeMarkdown(text: string): string {
   if (!text) return "";
 
-  // 1. Escape all raw HTML to neutralize XSS
-  const escaped = escapeHtml(text);
+  // 1. Extract <details>...</details> blocks to render interactive collapsible dropdowns
+  const detailsBlocks: string[] = [];
+  const textWithoutDetails = text.replace(
+    /<details(?:\s+class="([^"]*)")?>\s*(?:<summary>(.*?)<\/summary>)?([\s\S]*?)<\/details>/gi,
+    (_, _cls, summary, content) => {
+      const idx = detailsBlocks.length;
+      const cleanSummary = (summary || "Thinking & Query Execution").trim();
+      const renderedContent = renderSafeMarkdown(content.trim());
+      const detailsHtml = `
+<details class="group my-2.5 border border-slate-800/80 bg-slate-950/60 hover:bg-slate-950/80 rounded-lg overflow-hidden transition-all duration-200 shadow-sm">
+  <summary class="flex items-center justify-between cursor-pointer select-none px-3 py-2 text-[11px] font-medium text-slate-400 hover:text-cyan-300 bg-slate-900/40 hover:bg-slate-900/70 border-b border-transparent group-open:border-slate-800/70 transition-all">
+    <span class="flex items-center gap-1.5 font-mono">
+      <svg class="w-3.5 h-3.5 text-cyan-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/></svg>
+      <span>${formatInline(escapeHtml(cleanSummary))}</span>
+    </span>
+    <span class="text-[10px] text-slate-500 font-mono group-open:rotate-180 transition-transform duration-200">▼</span>
+  </summary>
+  <div class="p-3 text-[11px] space-y-2 text-slate-300 font-normal">
+    ${renderedContent}
+  </div>
+</details>`.trim();
+      detailsBlocks.push(detailsHtml);
+      return `\n\n___DETAILS_BLOCK_${idx}___\n\n`;
+    }
+  );
 
-  // 2. Process block elements line by line
+  // 2. Escape all raw HTML to neutralize XSS
+  const escaped = escapeHtml(textWithoutDetails);
+
+  // 3. Process block elements line by line
   const lines = escaped.split(/\r?\n/);
   const output: string[] = [];
   let inUl = false;
@@ -115,6 +141,78 @@ function renderSafeMarkdown(text: string): string {
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
+
+    // Details block placeholder
+    const detailsMatch = line.trim().match(/^___DETAILS_BLOCK_(\d+)___$/);
+    if (detailsMatch) {
+      if (inUl) {
+        output.push("</ul>");
+        inUl = false;
+      }
+      if (inOl) {
+        output.push("</ol>");
+        inOl = false;
+      }
+      const idx = Number(detailsMatch[1]);
+      output.push(detailsBlocks[idx] || "");
+      continue;
+    }
+
+    // Markdown Table parsing (consecutive lines starting & ending with |)
+    if (line.trim().startsWith("|") && line.trim().endsWith("|")) {
+      const tableLines: string[] = [line.trim()];
+      while (
+        i + 1 < lines.length &&
+        lines[i + 1].trim().startsWith("|") &&
+        lines[i + 1].trim().endsWith("|")
+      ) {
+        i++;
+        tableLines.push(lines[i].trim());
+      }
+      if (tableLines.length >= 2 && /^\|\s*[-:]+/.test(tableLines[1])) {
+        if (inUl) {
+          output.push("</ul>");
+          inUl = false;
+        }
+        if (inOl) {
+          output.push("</ol>");
+          inOl = false;
+        }
+
+        const headerCells = tableLines[0]
+          .split("|")
+          .slice(1, -1)
+          .map((c) => c.trim());
+        const bodyRows = tableLines.slice(2).map((rowStr) =>
+          rowStr
+            .split("|")
+            .slice(1, -1)
+            .map((c) => c.trim())
+        );
+
+        let tableHtml =
+          '<div class="overflow-x-auto my-2 rounded border border-slate-800/80 bg-slate-950/70 shadow-sm">';
+        tableHtml += '<table class="w-full text-left text-[11px] font-mono border-collapse">';
+        tableHtml += '<thead><tr class="border-b border-slate-800 bg-slate-900/90 text-cyan-300">';
+        headerCells.forEach((cell) => {
+          tableHtml += `<th class="px-3 py-1.5 font-semibold text-[10px] tracking-wider uppercase text-slate-300">${formatInline(
+            cell
+          )}</th>`;
+        });
+        tableHtml += "</tr></thead>";
+        tableHtml += '<tbody class="divide-y divide-slate-800/60 text-slate-300">';
+        bodyRows.forEach((row) => {
+          tableHtml += '<tr class="hover:bg-slate-900/40 transition-colors">';
+          row.forEach((cell) => {
+            tableHtml += `<td class="px-3 py-1.5 text-slate-200">${formatInline(cell)}</td>`;
+          });
+          tableHtml += "</tr>";
+        });
+        tableHtml += "</tbody></table></div>";
+        output.push(tableHtml);
+        continue;
+      }
+    }
 
     // Unordered list item (- or *)
     const ulMatch = line.match(/^(\s*)[-*]\s+(.*)$/);
@@ -224,9 +322,10 @@ function renderSafeMarkdown(text: string): string {
   }
 
   if (inUl) output.push("</ul>");
-  if (inOl) output.push("</ol>");
-
-  return output.join("");
+  let finalHtml = output.join("");
+  finalHtml = finalHtml.replace(/<p[^>]*>___DETAILS_BLOCK_(\d+)___<\/p>/g, (_, idx) => detailsBlocks[Number(idx)] || "");
+  finalHtml = finalHtml.replace(/___DETAILS_BLOCK_(\d+)___/g, (_, idx) => detailsBlocks[Number(idx)] || "");
+  return finalHtml;
 }
 
 interface ChatPanelProps {
