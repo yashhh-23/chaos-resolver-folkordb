@@ -6,14 +6,34 @@ import { GraphNode, SubgraphData } from "@/lib/api";
 import { getEndpointId } from "@/lib/utils";
 import { ZoomIn, ZoomOut, Maximize2, Minimize2, RotateCcw, Layers, RefreshCw } from "lucide-react";
 
-// Dynamically import ForceGraph2D with ssr disabled and forwardRef support
+// Dynamically import ForceGraph2D with ssr disabled and explicit ref forwarding via custom props
 const ForceGraph2D = dynamic(
   () =>
     import("react-force-graph-2d").then((mod) => {
       const Component = mod.default;
-      return React.forwardRef<any, any>((props, ref) => (
-        <Component ref={ref as any} {...props} />
-      ));
+      return function ForceGraphClient({
+        forwardedRef,
+        onGraphReady,
+        ...props
+      }: any) {
+        return (
+          <Component
+            ref={(inst: any) => {
+              if (forwardedRef) {
+                if (typeof forwardedRef === "function") {
+                  forwardedRef(inst);
+                } else {
+                  forwardedRef.current = inst;
+                }
+              }
+              if (onGraphReady) {
+                onGraphReady(inst);
+              }
+            }}
+            {...props}
+          />
+        );
+      };
     }),
   {
     ssr: false,
@@ -44,9 +64,21 @@ export default function GraphCanvas({
   onToggleMaximize,
 }: GraphCanvasProps) {
   const fgRef = useRef<any>(null);
+  const [graphReady, setGraphReady] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
   const [showOnlyActive, setShowOnlyActive] = useState(false);
+
+  // Helper to obtain the active ForceGraphMethods instance reliably
+  const getGraph = () => {
+    if (fgRef.current && typeof fgRef.current.zoom === "function") {
+      return fgRef.current;
+    }
+    if (typeof window !== "undefined" && (window as any).__warRoomForceGraph) {
+      return (window as any).__warRoomForceGraph;
+    }
+    return fgRef.current;
+  };
 
   // Measure container dimensions with ResizeObserver for instant splitter dragging responsiveness
   useEffect(() => {
@@ -122,50 +154,68 @@ export default function GraphCanvas({
 
   // Center on active nodes or graph when data updates
   useEffect(() => {
-    if (fgRef.current) {
+    const fg = getGraph();
+    if (fg) {
       setTimeout(() => {
-        fgRef.current?.zoomToFit?.(400, 40);
+        fg?.zoomToFit?.(400, 40);
       }, 500);
     }
-  }, [displayData]);
+  }, [displayData, graphReady]);
 
   // Re-center on canvas when maximized or minimized layout changes
   useEffect(() => {
-    if (fgRef.current) {
+    const fg = getGraph();
+    if (fg) {
       setTimeout(() => {
-        fgRef.current?.zoomToFit?.(400, 40);
+        fg?.zoomToFit?.(400, 40);
       }, 300);
     }
-  }, [isMaximized]);
+  }, [isMaximized, graphReady]);
 
   const handleZoomIn = () => {
-    if (!fgRef.current) return;
+    const fg = getGraph();
+    if (!fg) {
+      console.warn("Force graph instance not yet ready");
+      return;
+    }
     try {
-      const current = typeof fgRef.current.zoom === "function" ? fgRef.current.zoom() : 1;
+      const current = typeof fg.zoom === "function" ? fg.zoom() : 1;
       const validZoom = typeof current === "number" && !isNaN(current) && current > 0 ? current : 1;
-      fgRef.current.zoom(validZoom * 1.35, 300);
+      fg.zoom(validZoom * 1.35, 300);
     } catch (e) {
       console.warn("Zoom In error:", e);
     }
   };
 
   const handleZoomOut = () => {
-    if (!fgRef.current) return;
+    const fg = getGraph();
+    if (!fg) {
+      console.warn("Force graph instance not yet ready");
+      return;
+    }
     try {
-      const current = typeof fgRef.current.zoom === "function" ? fgRef.current.zoom() : 1;
+      const current = typeof fg.zoom === "function" ? fg.zoom() : 1;
       const validZoom = typeof current === "number" && !isNaN(current) && current > 0 ? current : 1;
-      fgRef.current.zoom(Math.max(validZoom * 0.7, 0.05), 300);
+      fg.zoom(Math.max(validZoom * 0.7, 0.05), 300);
     } catch (e) {
       console.warn("Zoom Out error:", e);
     }
   };
 
   const handleFitView = () => {
-    if (!fgRef.current) return;
+    const fg = getGraph();
+    if (!fg) {
+      console.warn("Force graph instance not yet ready");
+      return;
+    }
     try {
-      fgRef.current.zoomToFit?.(400, 40);
+      fg.zoomToFit?.(400, 40);
     } catch (e) {
       console.warn("Fit view error:", e);
+      try {
+        fg.centerAt?.(0, 0, 300);
+        fg.zoom?.(1, 300);
+      } catch {}
     }
   };
 
@@ -290,6 +340,14 @@ export default function GraphCanvas({
       {/* Live Graph Canvas */}
       <ForceGraph2D
         ref={fgRef}
+        forwardedRef={fgRef}
+        onGraphReady={(inst: any) => {
+          fgRef.current = inst;
+          if (typeof window !== "undefined") {
+            (window as any).__warRoomForceGraph = inst;
+          }
+          setGraphReady(true);
+        }}
         width={dimensions.width}
         height={dimensions.height}
         graphData={displayData}
