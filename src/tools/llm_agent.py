@@ -123,7 +123,7 @@ class LLMAgent:
                 return ToolResult(
                     tool_name="schema_constrained_cypher",
                     status="error",
-                    text_answer=f"⚠️ **Security Violation**: Destructive or mutating Cypher statement `{forbidden}` is prohibited in text-to-Cypher.",
+                    text_answer=f"**Security Violation**: Destructive or mutating Cypher statement `{forbidden}` is prohibited in text-to-Cypher.",
                     subgraph=Subgraph(),
                 )
 
@@ -138,7 +138,7 @@ class LLMAgent:
 
             # Format tabular answer
             lines = [
-                f"### 🔍 Dynamic FalkorDB Query Result\n",
+                f"### Dynamic FalkorDB Query Result\n",
                 f"**Cypher**: `{sanitized}`\n",
                 f"**Purpose**: *{explanation}*\n",
                 f"**Returned**: {len(rows)} record(s)\n",
@@ -168,7 +168,7 @@ class LLMAgent:
             return ToolResult(
                 tool_name="schema_constrained_cypher",
                 status="error",
-                text_answer=f"⚠️ **Cypher Execution Error**: {e}\nQuery attempted: `{sanitized}`",
+                text_answer=f"**Cypher Execution Error**: {e}\nQuery attempted: `{sanitized}`",
                 subgraph=subgraph,
             )
 

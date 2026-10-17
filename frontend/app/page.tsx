@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import { Brain } from "lucide-react";
 import ChatPanel from "@/components/ChatPanel";
 import GraphCanvas from "@/components/GraphCanvas";
 import NodeInspectorModal from "@/components/NodeInspectorModal";
@@ -118,12 +119,13 @@ export default function WarRoomDashboard() {
           </span>
           {availableGraphs.map((g) => {
             const isSelected = g === selectedGraph;
+            const isMerged = g === "merged_brain";
             const label =
               g === "finpay_graph"
                 ? "FinPay (Isolated)"
                 : g === "vaultly_graph"
                 ? "Vaultly (Isolated)"
-                : "Merged Brain 🧠";
+                : "Merged Brain";
             return (
               <button
                 key={g}
@@ -132,13 +134,14 @@ export default function WarRoomDashboard() {
                   setActiveSubgraph(null);
                   setSelectedNode(null);
                 }}
-                className={`px-3 py-1.5 rounded-lg font-medium transition-all ${
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-medium transition-all ${
                   isSelected
                     ? "bg-indigo-600 text-white shadow-md shadow-indigo-500/20"
                     : "text-slate-300 hover:text-white hover:bg-slate-800/80"
                 }`}
               >
-                {label}
+                {isMerged && <Brain className="w-3.5 h-3.5 text-cyan-300" />}
+                <span>{label}</span>
               </button>
             );
           })}

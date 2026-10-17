@@ -731,14 +731,14 @@ class GraphAgentTools:
 
         # 3. Format markdown response
         lines = [
-            f"### 🏝️ Organizational Silo & Network Topology Analysis (Weakly Connected Components)\n",
+            f"### Organizational Silo & Network Topology Analysis (Weakly Connected Components)\n",
             f"Discovered **{len(components)} connected components** across the enterprise knowledge graph (`{self.graph_name}`):\n",
             f"- **Integrated Core Networks**: {len(integrated_components)} component(s) bridging FinPay and Vaultly.",
             f"- **Isolated Organizational Silos**: {len(silo_components)} disconnected island(s) with 0 cross-border connections.\n",
         ]
 
         if silo_components:
-            lines.append("#### ⚠️ Critical Siloed Business Units Detected:")
+            lines.append("#### Critical Siloed Business Units Detected:")
             for s in silo_components:
                 co_label = s["companies"][0] if s["companies"] else "Isolated"
                 teams_str = ", ".join(s["teams"]) if s["teams"] else "No formal team entity"
@@ -754,7 +754,7 @@ class GraphAgentTools:
                 )
 
         if integrated_components:
-            lines.append("\n#### 🔗 Cross-Border Integrated Networks:")
+            lines.append("\n#### Cross-Border Integrated Networks:")
             for integ in integrated_components:
                 teams_str = ", ".join(integ["teams"][:4]) if integ["teams"] else "Cross-functional"
                 lines.append(

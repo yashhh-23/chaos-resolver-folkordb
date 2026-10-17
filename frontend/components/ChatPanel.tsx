@@ -72,6 +72,16 @@ function escapeHtml(str: string): string {
     .replace(/'/g, "&#39;");
 }
 
+const EMOJI_TO_SVG: Record<string, string> = {
+  "🧠": `<svg class="inline-block w-4 h-4 text-cyan-400 align-text-bottom mr-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/><path d="M17.599 6.5a3 3 0 0 0 .399-1.375"/><path d="M6.003 5.125A3 3 0 0 0 6.401 6.5"/><path d="M3.477 10.896a4 4 0 0 1 .585-.396"/><path d="M19.938 10.5a4 4 0 0 1 .585.396"/><path d="M6 18a4 4 0 0 1-1.967-.516"/><path d="M19.967 17.484A4 4 0 0 1 18 18"/></svg>`,
+  "⚡": `<svg class="inline-block w-3.5 h-3.5 text-amber-400 align-text-bottom mr-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>`,
+  "⚠️": `<svg class="inline-block w-3.5 h-3.5 text-amber-400 align-text-bottom mr-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>`,
+  "🔍": `<svg class="inline-block w-3.5 h-3.5 text-cyan-400 align-text-bottom mr-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>`,
+  "🔗": `<svg class="inline-block w-3.5 h-3.5 text-indigo-400 align-text-bottom mr-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>`,
+  "🏝️": `<svg class="inline-block w-3.5 h-3.5 text-cyan-400 align-text-bottom mr-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>`,
+  "🏝": `<svg class="inline-block w-3.5 h-3.5 text-cyan-400 align-text-bottom mr-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>`,
+};
+
 function formatInline(str: string): string {
   const codeSpans: string[] = [];
   // 1. Extract inline code spans and replace with placeholder to protect internal asterisks/brackets
@@ -95,7 +105,14 @@ function formatInline(str: string): string {
     '<a href="$2" target="_blank" rel="noopener noreferrer" class="text-cyan-400 underline underline-offset-2 hover:text-cyan-300 font-medium">$1</a>'
   );
 
-  // 5. Restore protected code spans
+  // 5. Replace any emojis with proper inline SVGs
+  for (const [emoji, svg] of Object.entries(EMOJI_TO_SVG)) {
+    if (processed.includes(emoji)) {
+      processed = processed.split(emoji).join(svg);
+    }
+  }
+
+  // 6. Restore protected code spans
   return processed.replace(/___INLINE_CODE_(\d+)___/g, (_, idx) => codeSpans[Number(idx)] || "");
 }
 
@@ -152,11 +169,40 @@ function renderSafeMarkdown(text: string): string {
 
     // Headings
     if (line.startsWith("### ")) {
-      output.push(`<h3 class="font-bold text-cyan-400 text-sm mt-2 mb-1">${formatInline(line.slice(4))}</h3>`);
+      const headingText = line.slice(4).trim();
+      let iconSvg = "";
+      if (headingText.includes("Welcome to OrgBridge AI") || headingText.includes("Brain")) {
+        iconSvg = EMOJI_TO_SVG["🧠"];
+      } else if (headingText.includes("Live Graph Mutation")) {
+        iconSvg = EMOJI_TO_SVG["⚡"];
+      } else if (headingText.includes("Organizational Silo")) {
+        iconSvg = `<svg class="inline-block w-4 h-4 text-cyan-400 align-text-bottom mr-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>`;
+      } else if (headingText.includes("Policy & Compliance Conflicts")) {
+        iconSvg = `<svg class="inline-block w-4 h-4 text-red-400 align-text-bottom mr-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>`;
+      } else if (headingText.includes("Redundant Microservices")) {
+        iconSvg = `<svg class="inline-block w-4 h-4 text-green-400 align-text-bottom mr-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 0 0 9 9"/></svg>`;
+      } else if (headingText.includes("Decision Lineage")) {
+        iconSvg = `<svg class="inline-block w-4 h-4 text-amber-400 align-text-bottom mr-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>`;
+      } else if (headingText.includes("Warm Introduction Path")) {
+        iconSvg = `<svg class="inline-block w-4 h-4 text-cyan-400 align-text-bottom mr-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>`;
+      } else if (headingText.includes("Top SME Counterpart")) {
+        iconSvg = `<svg class="inline-block w-4 h-4 text-blue-400 align-text-bottom mr-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>`;
+      } else if (headingText.includes("Dynamic FalkorDB Query Result")) {
+        iconSvg = EMOJI_TO_SVG["🔍"];
+      }
+
+      output.push(`<h3 class="flex items-center gap-1.5 font-bold text-cyan-400 text-sm mt-2 mb-1">${iconSvg}${formatInline(headingText)}</h3>`);
       continue;
     }
     if (line.startsWith("#### ")) {
-      output.push(`<h4 class="font-semibold text-slate-100 text-xs mt-1.5 mb-0.5">${formatInline(line.slice(5))}</h4>`);
+      const headingText = line.slice(5).trim();
+      let subIcon = "";
+      if (headingText.toLowerCase().includes("critical") || headingText.toLowerCase().includes("conflict") || headingText.toLowerCase().includes("error") || headingText.toLowerCase().includes("warning")) {
+        subIcon = EMOJI_TO_SVG["⚠️"];
+      } else if (headingText.toLowerCase().includes("cross-border") || headingText.toLowerCase().includes("integrated")) {
+        subIcon = EMOJI_TO_SVG["🔗"];
+      }
+      output.push(`<h4 class="flex items-center gap-1.5 font-semibold text-slate-100 text-xs mt-1.5 mb-0.5">${subIcon}${formatInline(headingText)}</h4>`);
       continue;
     }
 
@@ -288,7 +334,7 @@ export default function ChatPanel({
     {
       id: "welcome",
       sender: "agent",
-      text: "### 🧠 Welcome to OrgBridge AI (The M&A Chaos Resolver)\n\nI am connected to your live **FalkorDB Multi-Tenant Brain** (`finpay_graph`, `vaultly_graph`, and `merged_brain`).\n\nClick any of the **M&A Crisis Prompts** below or ask any question to resolve organizational silos, uncover hidden dependencies, and detect conflicting architectural decisions.",
+      text: "### Welcome to OrgBridge AI (The M&A Chaos Resolver)\n\nI am connected to your live **FalkorDB Multi-Tenant Brain** (`finpay_graph`, `vaultly_graph`, and `merged_brain`).\n\nClick any of the **M&A Crisis Prompts** below or ask any question to resolve organizational silos, uncover hidden dependencies, and detect conflicting architectural decisions.",
       timestamp: "Just now",
     },
   ]);
@@ -357,7 +403,7 @@ export default function ChatPanel({
       const agentMsg: Message = {
         id: (Date.now() + 1).toString(),
         sender: "agent",
-        text: `### ⚡ Live Graph Mutation Executed (Track 03)\n\n` +
+        text: `### Live Graph Mutation Executed (Track 03)\n\n` +
               `**Action**: \`${res.action || action}\`\n\n` +
               `**Result**: ${res.resolution_summary || res.message}\n\n` +
               `> *FalkorDB multigraph state updated live via Cypher MERGE/SET. Knowledge is current as of ${res.timestamp || "now"}.*`,
