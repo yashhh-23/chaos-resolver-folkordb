@@ -198,32 +198,93 @@ class LLMAgent:
                     first_row = rows[0]
                     if headers and len(first_row) == len(headers):
                         row_map = {str(h): first_row[idx] for idx, h in enumerate(headers)}
-                        name = row_map.get("p.name") or row_map.get("name") or "The requested person"
-                        role = row_map.get("p.role") or row_map.get("role") or ""
-                        dept = row_map.get("p.department") or row_map.get("department") or ""
                         company = (
                             row_map.get("p.company_origin")
+                            or row_map.get("s.company_origin")
+                            or row_map.get("pol.company_origin")
+                            or row_map.get("t.company_origin")
                             or row_map.get("company_origin")
                             or row_map.get("p.company")
                             or row_map.get("company")
                             or ""
                         )
-                        team = row_map.get("t.name") or row_map.get("team") or ""
 
-                        parts = [name]
-                        if role:
-                            parts.append(f"is a {role}")
-                        if team:
-                            parts.append(f"on the {team} team")
-                        if dept:
-                            parts.append(f"within the {dept} department")
-                        if company:
-                            parts.append(f"of {company} company")
+                        # 1. System entity dispatch
+                        if (
+                            any(k.startswith("s.") for k in row_map)
+                            or "s.name" in row_map
+                            or ("system" in user_prompt.lower() and not any(k.startswith("p.") for k in row_map))
+                        ):
+                            sys_name = row_map.get("s.name") or row_map.get("name") or "The requested system"
+                            tech = row_map.get("s.tech") or row_map.get("tech") or ""
+                            domain = row_map.get("s.domain") or row_map.get("domain") or ""
+                            tier = row_map.get("s.tier") or row_map.get("tier") or ""
+                            parts = [f"**{sys_name}** is a"]
+                            if tier:
+                                parts.append(str(tier))
+                            if domain:
+                                parts.append(f"{domain}")
+                            parts.append("system")
+                            if tech:
+                                parts.append(f"built with {tech}")
+                            if company:
+                                parts.append(f"at {company} company")
+                            friendly_answer = " ".join(parts) + f". (Found {len(rows)} matching record{'s' if len(rows) != 1 else ''})."
 
-                        if len(parts) > 1:
-                            friendly_answer = " ".join(parts) + "."
+                        # 2. Policy entity dispatch
+                        elif (
+                            any(k.startswith("pol.") for k in row_map)
+                            or "pol.name" in row_map
+                            or "policy" in user_prompt.lower()
+                        ):
+                            pol_name = row_map.get("pol.name") or row_map.get("name") or "The policy"
+                            domain = row_map.get("pol.domain") or row_map.get("domain") or ""
+                            sev = row_map.get("pol.severity") or row_map.get("severity") or ""
+                            auth = row_map.get("pol.authority") or row_map.get("authority") or ""
+                            parts = [f"**{pol_name}** is a"]
+                            if sev:
+                                parts.append(f"{sev}-severity")
+                            if domain:
+                                parts.append(f"{domain}")
+                            parts.append("governance policy")
+                            if auth:
+                                parts.append(f"enforced by {auth}")
+                            if company:
+                                parts.append(f"of {company} company")
+                            friendly_answer = " ".join(parts) + f". (Found {len(rows)} matching record{'s' if len(rows) != 1 else ''})."
+
+                        # 3. Team entity dispatch
+                        elif any(k.startswith("t.") for k in row_map) and not any(k.startswith("p.") for k in row_map):
+                            team_name = row_map.get("t.name") or row_map.get("name") or "The requested team"
+                            dept = row_map.get("t.department") or row_map.get("department") or ""
+                            parts = [f"**{team_name}** is an engineering team"]
+                            if dept:
+                                parts.append(f"in the {dept} department")
+                            if company:
+                                parts.append(f"of {company} company")
+                            friendly_answer = " ".join(parts) + f". (Found {len(rows)} matching record{'s' if len(rows) != 1 else ''})."
+
+                        # 4. Person entity default
                         else:
-                            friendly_answer = f"Found {len(rows)} record(s) matching your request."
+                            name = row_map.get("p.name") or row_map.get("name") or "The requested person"
+                            role = row_map.get("p.role") or row_map.get("role") or ""
+                            dept = row_map.get("p.department") or row_map.get("department") or ""
+                            team = row_map.get("t.name") or row_map.get("team") or ""
+
+                            parts = [name]
+                            if role:
+                                parts.append(f"is a {role}")
+                            if team:
+                                parts.append(f"on the {team} team")
+                            if dept:
+                                parts.append(f"within the {dept} department")
+                            if company:
+                                parts.append(f"of {company} company")
+
+                            if len(parts) > 1:
+                                friendly_answer = " ".join(parts) + "."
+                            else:
+                                friendly_answer = f"Found {len(rows)} record(s) matching your request."
                     else:
                         friendly_answer = f"Found {len(rows)} record(s) matching your request."
             else:
