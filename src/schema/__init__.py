@@ -18,6 +18,7 @@ from src.schema.cypher_schema import (
     ALLOWED_RELATIONSHIPS,
     INDEX_QUERIES,
     sanitize_cypher_query,
+    format_cypher_properties,
     build_node_merge_cypher,
     build_relationship_merge_cypher,
 )
@@ -40,6 +41,7 @@ __all__ = [
     "ALLOWED_RELATIONSHIPS",
     "INDEX_QUERIES",
     "sanitize_cypher_query",
+    "format_cypher_properties",
     "build_node_merge_cypher",
     "build_relationship_merge_cypher",
 ]

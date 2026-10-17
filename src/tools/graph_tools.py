@@ -13,7 +13,7 @@ Every tool returns:
 - A structured Subgraph JSON (nodes and edges traversed) for UI visualization
 """
 
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Set
 from pydantic import BaseModel, Field
 from src.config import settings
 from src.db.client import db_client
@@ -623,6 +623,31 @@ class GraphAgentTools:
             subgraph=subgraph,
         )
 
+    @staticmethod
+    def _build_component_subgraph(
+        components: List[Dict[str, Any]],
+        nodes_data: Dict[str, Dict[str, Any]],
+        subgraph: Subgraph,
+        allowed_labels: Optional[Set[str]] = None,
+        max_nodes: Optional[int] = None,
+    ) -> None:
+        """Serializes and adds component nodes to the visualization subgraph with optional label filtering and capacity limit."""
+        for comp in components:
+            for nid in comp.get("node_ids", []):
+                if max_nodes is not None and len(subgraph.nodes) >= max_nodes:
+                    return
+                ninfo = nodes_data.get(nid, {})
+                label = ninfo.get("label", "Node")
+                if allowed_labels is not None and label not in allowed_labels:
+                    continue
+                subgraph.add_node(
+                    node_id=nid,
+                    name=ninfo.get("name", nid),
+                    label=label,
+                    company=ninfo.get("company", "Unknown"),
+                    props=ninfo.get("props", {}),
+                )
+
     def detect_organizational_silos(self) -> ToolResult:
         """Discovers isolated organizational islands and silos across FinPay and Vaultly
         using Weakly Connected Components (WCC) graph clustering.
@@ -701,28 +726,14 @@ class GraphAgentTools:
                 silo_components.append(comp_info)
 
         # 2. Build Subgraph visualization: include siloed nodes and key bridge entities
-        for silo in silo_components:
-            for nid in silo["node_ids"]:
-                ninfo = nodes_data.get(nid, {})
-                subgraph.add_node(
-                    node_id=nid,
-                    name=ninfo.get("name", nid),
-                    label=ninfo.get("label", "Node"),
-                    company=ninfo.get("company", "Unknown"),
-                    props=ninfo.get("props", {}),
-                )
-
-        for integ in integrated_components:
-            for nid in integ["node_ids"]:
-                ninfo = nodes_data.get(nid, {})
-                if ninfo.get("label") in ("Team", "System") and len(subgraph.nodes) < settings.silos_subgraph_max_nodes:
-                    subgraph.add_node(
-                        node_id=nid,
-                        name=ninfo.get("name", nid),
-                        label=ninfo.get("label", "Node"),
-                        company=ninfo.get("company", "Unknown"),
-                        props=ninfo.get("props", {}),
-                    )
+        self._build_component_subgraph(silo_components, nodes_data, subgraph)
+        self._build_component_subgraph(
+            integrated_components,
+            nodes_data,
+            subgraph,
+            allowed_labels={"Team", "System"},
+            max_nodes=settings.silos_subgraph_max_nodes,
+        )
 
         subgraph_node_ids = {n.id for n in subgraph.nodes}
         for a_id, b_id, r_type in rel_triplets:

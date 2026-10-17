@@ -93,27 +93,54 @@ def escape_cypher_value(val: Any) -> str:
     return s.replace("\\", "\\\\").replace("'", "\\'")
 
 
+def format_cypher_value(val: Any) -> str:
+    """Formats a Python scalar/list value into a Cypher literal string representation."""
+    if isinstance(val, bool):
+        return str(val).lower()
+    elif isinstance(val, (int, float)):
+        return str(val)
+    elif isinstance(val, list):
+        escaped_list = [
+            f"'{escape_cypher_value(item)}'" if isinstance(item, str) else str(item)
+            for item in val
+        ]
+        return f"[{', '.join(escaped_list)}]"
+    elif val is None:
+        return "null"
+    return f"'{escape_cypher_value(val)}'"
+
+
+def format_cypher_properties(properties: Dict[str, Any], prefix: str = "") -> str:
+    """Formats and escapes a properties dictionary into Cypher property syntax.
+
+    If prefix is empty (default), returns Cypher object syntax '{k: v, ...}'.
+    If prefix is provided (e.g. 'r.'), returns comma-separated assignments: 'r.k = v, ...'.
+    """
+    if not properties:
+        return "" if prefix else "{}"
+
+    if prefix:
+        assignments = [
+            f"{prefix}{k} = {format_cypher_value(v)}"
+            for k, v in properties.items()
+            if v is not None
+        ]
+        return ", ".join(assignments)
+
+    props = [
+        f"{k}: {format_cypher_value(v)}"
+        for k, v in properties.items()
+        if v is not None
+    ]
+    return "{" + ", ".join(props) + "}"
+
+
 def build_node_merge_cypher(label: str, properties: Dict[str, Any]) -> str:
     """Builds a MERGE Cypher statement for a node using its unique ID."""
     if label not in ALLOWED_LABELS:
         raise ValueError(f"Label '{label}' is not in allowed schema labels: {ALLOWED_LABELS}")
 
-    props_strings = []
-    for k, v in properties.items():
-        if isinstance(v, str):
-            escaped = escape_cypher_value(v)
-            props_strings.append(f"{k}: '{escaped}'")
-        elif isinstance(v, (int, float)):
-            props_strings.append(f"{k}: {v}")
-        elif isinstance(v, bool):
-            props_strings.append(f"{k}: {str(v).lower()}")
-        elif v is None:
-            continue
-        else:
-            escaped = escape_cypher_value(v)
-            props_strings.append(f"{k}: '{escaped}'")
-
-    props_repr = "{" + ", ".join(props_strings) + "}"
+    props_repr = format_cypher_properties(properties)
     node_id = escape_cypher_value(properties.get("id", ""))
     return f"MERGE (n:{label} {{id: '{node_id}'}}) ON CREATE SET n = {props_repr} ON MATCH SET n = {props_repr}"
 
@@ -133,20 +160,9 @@ def build_relationship_merge_cypher(
 
     prop_assigns = ""
     if properties:
-        items = []
-        for k, v in properties.items():
-            if isinstance(v, str):
-                escaped = escape_cypher_value(v)
-                items.append(f"r.{k} = '{escaped}'")
-            elif isinstance(v, (int, float)):
-                items.append(f"r.{k} = {v}")
-            elif isinstance(v, bool):
-                items.append(f"r.{k} = {str(v).lower()}")
-            else:
-                escaped = escape_cypher_value(v)
-                items.append(f"r.{k} = '{escaped}'")
-        if items:
-            prop_assigns = " ON CREATE SET " + ", ".join(items) + " ON MATCH SET " + ", ".join(items)
+        assignments = format_cypher_properties(properties, prefix="r.")
+        if assignments:
+            prop_assigns = f" ON CREATE SET {assignments} ON MATCH SET {assignments}"
 
     return (
         f"MATCH (a {{id: '{src_escaped}'}}), (b {{id: '{tgt_escaped}'}}) "

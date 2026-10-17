@@ -1,4 +1,5 @@
 import { SubgraphData } from "./api";
+import { getEndpointId } from "./utils";
 
 /**
  * Curated offline fallback graph representing the core FinPay & Vaultly M&A dilemma.
@@ -185,8 +186,8 @@ export function getFallbackGraph(selectedGraph: string = "merged_brain"): Subgra
     const finpayNodeIds = new Set(finpayNodes.map((n) => n.id));
 
     const validEdges = FALLBACK_STATIC_GRAPH.edges.filter((e) => {
-      const src = typeof e.source === "string" ? e.source : e.source.id;
-      const tgt = typeof e.target === "string" ? e.target : e.target.id;
+      const src = getEndpointId(e.source);
+      const tgt = getEndpointId(e.target);
       return (
         (finpayNodeIds.has(src) || finpayNodeIds.has(tgt)) &&
         !src.startsWith("vaultly:") &&
@@ -196,8 +197,8 @@ export function getFallbackGraph(selectedGraph: string = "merged_brain"): Subgra
 
     const connectedNodeIds = new Set<string>();
     validEdges.forEach((e) => {
-      connectedNodeIds.add(typeof e.source === "string" ? e.source : e.source.id);
-      connectedNodeIds.add(typeof e.target === "string" ? e.target : e.target.id);
+      connectedNodeIds.add(getEndpointId(e.source));
+      connectedNodeIds.add(getEndpointId(e.target));
     });
 
     const nodes = FALLBACK_STATIC_GRAPH.nodes.filter(
@@ -212,8 +213,8 @@ export function getFallbackGraph(selectedGraph: string = "merged_brain"): Subgra
     const vaultlyNodeIds = new Set(vaultlyNodes.map((n) => n.id));
 
     const validEdges = FALLBACK_STATIC_GRAPH.edges.filter((e) => {
-      const src = typeof e.source === "string" ? e.source : e.source.id;
-      const tgt = typeof e.target === "string" ? e.target : e.target.id;
+      const src = getEndpointId(e.source);
+      const tgt = getEndpointId(e.target);
       return (
         (vaultlyNodeIds.has(src) || vaultlyNodeIds.has(tgt)) &&
         !src.startsWith("finpay:") &&
@@ -223,8 +224,8 @@ export function getFallbackGraph(selectedGraph: string = "merged_brain"): Subgra
 
     const connectedNodeIds = new Set<string>();
     validEdges.forEach((e) => {
-      connectedNodeIds.add(typeof e.source === "string" ? e.source : e.source.id);
-      connectedNodeIds.add(typeof e.target === "string" ? e.target : e.target.id);
+      connectedNodeIds.add(getEndpointId(e.source));
+      connectedNodeIds.add(getEndpointId(e.target));
     });
 
     const nodes = FALLBACK_STATIC_GRAPH.nodes.filter(

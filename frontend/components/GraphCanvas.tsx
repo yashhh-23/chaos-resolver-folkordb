@@ -3,6 +3,7 @@
 import React, { useRef, useEffect, useState, useMemo } from "react";
 import dynamic from "next/dynamic";
 import { GraphNode, SubgraphData } from "@/lib/api";
+import { getEndpointId } from "@/lib/utils";
 import { ZoomIn, ZoomOut, Maximize2, Layers, RefreshCw } from "lucide-react";
 
 // Dynamically import ForceGraph2D with ssr disabled
@@ -59,8 +60,8 @@ export default function GraphCanvas({
     if (!activeSubgraph?.edges) return new Set<string>();
     const keys = new Set<string>();
     for (const e of activeSubgraph.edges) {
-      const sId = typeof e.source === "object" ? (e.source as any).id : e.source;
-      const tId = typeof e.target === "object" ? (e.target as any).id : e.target;
+      const sId = getEndpointId(e.source);
+      const tId = getEndpointId(e.target);
       keys.add(`${sId}->${tId}`);
       keys.add(`${tId}->${sId}`);
     }
@@ -82,8 +83,8 @@ export default function GraphCanvas({
 
     const links = rawEdges
       .filter((e) => {
-        const sId = typeof e.source === "object" && e.source !== null ? (e.source as any).id : e.source;
-        const tId = typeof e.target === "object" && e.target !== null ? (e.target as any).id : e.target;
+        const sId = getEndpointId(e.source);
+        const tId = getEndpointId(e.target);
         return validNodeIds.has(sId) && validNodeIds.has(tId);
       })
       .map((e) => ({ ...e }));
@@ -113,8 +114,8 @@ export default function GraphCanvas({
   };
 
   const getEdgeColor = (link: any) => {
-    const sId = typeof link.source === "object" && link.source !== null ? link.source.id : link.source;
-    const tId = typeof link.target === "object" && link.target !== null ? link.target.id : link.target;
+    const sId = getEndpointId(link.source);
+    const tId = getEndpointId(link.target);
     const isHighlighted = activeEdgeKeys.size === 0 || activeEdgeKeys.has(`${sId}->${tId}`);
 
     if (link.rel_type === "CONFLICTS_WITH") return isHighlighted ? "#ef4444" : "#ef444433";
@@ -241,15 +242,15 @@ export default function GraphCanvas({
         }}
         linkColor={getEdgeColor}
         linkWidth={(link: any) => {
-          const sId = typeof link.source === "object" ? link.source.id : link.source;
-          const tId = typeof link.target === "object" ? link.target.id : link.target;
+          const sId = getEndpointId(link.source);
+          const tId = getEndpointId(link.target);
           return activeEdgeKeys.has(`${sId}->${tId}`) ? 3 : 1.2;
         }}
         linkDirectionalArrowLength={4}
         linkDirectionalArrowRelPos={0.9}
         linkDirectionalParticles={(link: any) => {
-          const sId = typeof link.source === "object" ? link.source.id : link.source;
-          const tId = typeof link.target === "object" ? link.target.id : link.target;
+          const sId = getEndpointId(link.source);
+          const tId = getEndpointId(link.target);
           return activeEdgeKeys.has(`${sId}->${tId}`) ? 3 : 0;
         }}
         linkDirectionalParticleSpeed={0.008}
