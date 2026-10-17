@@ -392,4 +392,58 @@ def test_trace_decision_lineage_deterministic_system_and_ambiguity(monkeypatch):
     assert res_amb.details["matched_count"] == 2
 
 
+def test_fetch_visualization_subgraph_bridge_prioritization():
+    """Verifies that fetch_visualization_subgraph prioritizes bridge/conflict edges and retains all endpoints (F2)."""
+    from src.tools.graph_tools import fetch_visualization_subgraph
 
+    subgraph = fetch_visualization_subgraph(graph_name="merged_brain", node_limit=150, rel_limit=250)
+    assert len(subgraph.nodes) > 0
+    assert len(subgraph.edges) > 0
+
+    rel_types = {e.rel_type for e in subgraph.edges}
+    assert "CONFLICTS_WITH" in rel_types or "REDUNDANT_WITH" in rel_types
+
+    # Endpoints integrity: every edge's endpoints MUST be present in the node set
+    node_ids = {n.id for n in subgraph.nodes}
+    for e in subgraph.edges:
+        assert e.source in node_ids, f"Edge source {e.source} missing from nodes!"
+        assert e.target in node_ids, f"Edge target {e.target} missing from nodes!"
+
+    # Embedding stripping check
+    for n in subgraph.nodes:
+        assert "embedding" not in n.properties
+    for e in subgraph.edges:
+        assert "embedding" not in e.properties
+
+
+def test_fetch_visualization_neighborhood():
+    """Verifies targeted neighborhood extraction around a focus node (F2)."""
+    from src.tools.graph_tools import fetch_visualization_subgraph
+
+    center_id = "finpay:pol:session_security"
+    subgraph = fetch_visualization_subgraph(
+        graph_name="merged_brain",
+        focus_node_id=center_id,
+        focus_hops=1,
+    )
+    assert any(n.id == center_id for n in subgraph.nodes)
+    if subgraph.edges:
+        for e in subgraph.edges:
+            assert e.source == center_id or e.target == center_id
+
+
+def test_api_graph_visualization_and_neighborhood_endpoints():
+    """Verifies the FastAPI endpoints for subgraph and neighborhood queries (F2)."""
+    # Subgraph endpoint with custom limits
+    sub_resp = client.get("/api/graph/subgraph?graph=merged_brain&node_limit=50&rel_limit=50")
+    assert sub_resp.status_code == 200
+    sub_data = sub_resp.json()
+    assert "nodes" in sub_data and "edges" in sub_data
+    assert len(sub_data["nodes"]) <= 50
+
+    # Neighborhood endpoint
+    neigh_resp = client.get("/api/graph/neighborhood/finpay:pol:session_security?graph=merged_brain")
+    assert neigh_resp.status_code == 200
+    neigh_data = neigh_resp.json()
+    assert "nodes" in neigh_data and "edges" in neigh_data
+    assert any(n["id"] == "finpay:pol:session_security" for n in neigh_data["nodes"])

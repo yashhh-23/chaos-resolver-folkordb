@@ -20,6 +20,7 @@ export default function WarRoomDashboard() {
     "merged_brain",
   ]);
   const [selectedGraph, setSelectedGraph] = useState<string>("merged_brain");
+  const [isFallbackMode, setIsFallbackMode] = useState<boolean>(false);
 
   // Draggable splitter & graph maximize state
   const [chatWidth, setChatWidth] = useState<number>(480);
@@ -71,12 +72,15 @@ export default function WarRoomDashboard() {
         const data = await fetchFullSubgraph(selectedGraph);
         if (data && data.nodes && data.nodes.length > 0) {
           setGraphData(data);
+          setIsFallbackMode(false);
         } else {
           setGraphData(getFallbackGraph(selectedGraph));
+          setIsFallbackMode(true);
         }
       } catch (err) {
-        console.info("Live backend connection pending, activating curated static preview:", err);
+        console.info("Live backend connection pending, activating curated offline demo preview:", err);
         setGraphData(getFallbackGraph(selectedGraph));
+        setIsFallbackMode(true);
       } finally {
         setIsLoading(false);
       }
@@ -100,6 +104,7 @@ export default function WarRoomDashboard() {
           const data = await fetchFullSubgraph(selectedGraph);
           if (data && data.nodes && data.nodes.length > 0) {
             setGraphData(data);
+            setIsFallbackMode(false);
           }
         }
       } catch {
@@ -178,9 +183,9 @@ export default function WarRoomDashboard() {
 
       {/* Right Panel: Interactive FalkorDB Force-Graph Canvas */}
       <div className="relative flex-1 h-full min-w-0 bg-slate-950">
-        {/* Floating Tenant Graph Selector Pill for Judges */}
-        <div className="absolute top-4 left-4 z-20 flex items-center gap-1.5 p-1 bg-slate-900/90 backdrop-blur-md border border-slate-700/80 rounded-xl shadow-xl text-xs">
-          <span className="px-2.5 py-1 text-slate-400 font-semibold uppercase tracking-wider text-[10px]">
+        {/* Floating Tenant Graph Selector Pill & Live/Preview Status for Judges */}
+        <div className="absolute top-4 left-4 z-20 flex items-center gap-2 p-1 bg-slate-900/90 backdrop-blur-md border border-slate-700/80 rounded-xl shadow-xl text-xs max-w-[calc(100%-2rem)] overflow-x-auto">
+          <span className="px-2.5 py-1 text-slate-400 font-semibold uppercase tracking-wider text-[10px] whitespace-nowrap">
             Graph Tenant:
           </span>
           {availableGraphs.map((g) => {
@@ -200,7 +205,7 @@ export default function WarRoomDashboard() {
                   setActiveSubgraph(null);
                   setSelectedNode(null);
                 }}
-                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-medium transition-all ${
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-medium whitespace-nowrap transition-all ${
                   isSelected
                     ? "bg-indigo-600 text-white shadow-md shadow-indigo-500/20"
                     : "text-slate-300 hover:text-white hover:bg-slate-800/80"
@@ -211,6 +216,27 @@ export default function WarRoomDashboard() {
               </button>
             );
           })}
+
+          <div className="h-4 w-[1px] bg-slate-700/80 mx-0.5 hidden sm:block" />
+
+          {/* Explicit Connection / Preview Mode Status Badge (F1) */}
+          {isFallbackMode ? (
+            <span
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-400 font-medium text-[11px] whitespace-nowrap"
+              title="Displaying curated offline demo preview with cross-company bridges while backend instance initializes"
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping" />
+              <span>Offline Demo Preview (Connecting to FalkorDB...)</span>
+            </span>
+          ) : (
+            <span
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-medium text-[11px] whitespace-nowrap"
+              title="Connected to live FalkorDB GraphBLAS instance"
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              <span>Live FalkorDB Multi-Tenant</span>
+            </span>
+          )}
         </div>
 
         <GraphCanvas

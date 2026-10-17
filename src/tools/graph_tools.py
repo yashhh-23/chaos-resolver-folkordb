@@ -1269,54 +1269,242 @@ agent_tools = GraphAgentTools()
 
 def fetch_visualization_subgraph(
     graph_name: Optional[str] = None,
-    node_limit: int = 100,
-    rel_limit: int = 150,
+    node_limit: int = 150,
+    rel_limit: int = 250,
+    focus_node_id: Optional[str] = None,
+    focus_hops: int = 1,
 ) -> Subgraph:
-    """Returns nodes and edges for visual rendering, stripping bulky embedding vectors to optimize payload size."""
+    """Returns nodes and edges for visual rendering, stripping bulky embedding vectors to optimize payload size.
+
+    Fix F2:
+    - Guaranteed inclusion of high-priority cross-company bridge and conflict relationships
+      (CONFLICTS_WITH, REDUNDANT_WITH, SUPERSEDES) alongside their exact endpoint nodes.
+    - Endpoints are fetched together with relationships so edges are never dropped due to arbitrary sampling.
+    - Tiered relationship fetching:
+        Phase 1: Conflicts and Redundancies (bridges)
+        Phase 2: Governance and Ownership (GOVERNED_BY, OWNS, MEMBER_OF, DECIDED_BY, DEPENDS_ON)
+        Phase 3: Remaining relationships up to rel_limit
+        Phase 4: Additional isolated or context nodes up to node_limit
+    - Focus mode: when focus_node_id is provided, returns the centered neighborhood subgraph up to focus_hops.
+    """
     target_graph = graph_name or settings.graph_merged
     g = db_client.get_graph(target_graph)
     subgraph = Subgraph()
 
-    # Query nodes
-    node_query = f"""
-        MATCH (n)
-        RETURN n.id as id,
-               coalesce(n.name, n.title, n.summary, n.id) as display_name,
-               labels(n)[0] as label,
-               coalesce(n.company_origin, 'External') as company,
-               properties(n) as props
-        LIMIT {node_limit}
-    """
-    node_res = g.query(node_query)
-    for row in node_res.result_set:
-        props = dict(row[4]) if isinstance(row[4], dict) else {}
+    def _clean_props(raw_props: Any) -> Dict[str, Any]:
+        props = dict(raw_props) if isinstance(raw_props, dict) else {}
         props.pop("embedding", None)
-        subgraph.add_node(
-            node_id=row[0],
-            name=row[1],
-            label=row[2],
-            company=row[3],
-            props=props,
-        )
+        return props
 
-    # Query relationships (guaranteeing both source and target exist in node set)
-    valid_node_ids = {n.id for n in subgraph.nodes}
-    rel_query = f"""
-        MATCH (a)-[r]->(b)
-        RETURN a.id, b.id, type(r), properties(r)
+    # Case 1: Targeted neighborhood around focus_node_id
+    if focus_node_id:
+        focus_clean = focus_node_id.strip()
+        center_q = """
+            MATCH (c)
+            WHERE toLower(c.id) = toLower($ident) OR toLower(coalesce(c.name, '')) = toLower($ident)
+            RETURN c.id as id,
+                   coalesce(c.name, c.title, c.summary, c.id) as display_name,
+                   labels(c)[0] as label,
+                   coalesce(c.company_origin, 'External') as company,
+                   properties(c) as props
+            LIMIT 1
+        """
+        center_res = g.query(center_q, {"ident": focus_clean})
+        if center_res.result_set:
+            crow = center_res.result_set[0]
+            center_id = crow[0]
+            subgraph.add_node(
+                node_id=crow[0],
+                name=crow[1],
+                label=crow[2],
+                company=crow[3],
+                props=_clean_props(crow[4]),
+            )
+
+            # Query 1-hop connections
+            hop1_q = f"""
+                MATCH (c)-[r]-(neighbor)
+                WHERE c.id = $center_id
+                RETURN neighbor.id as n_id,
+                       coalesce(neighbor.name, neighbor.title, neighbor.summary, neighbor.id) as n_name,
+                       labels(neighbor)[0] as n_label,
+                       coalesce(neighbor.company_origin, 'External') as n_company,
+                       properties(neighbor) as n_props,
+                       type(r) as r_type,
+                       properties(r) as r_props,
+                       startNode(r).id as src_id,
+                       endNode(r).id as tgt_id
+                LIMIT {rel_limit}
+            """
+            hop1_res = g.query(hop1_q, {"center_id": center_id})
+            hop1_ids = []
+            for row in hop1_res.result_set:
+                subgraph.add_node(
+                    node_id=row[0],
+                    name=row[1],
+                    label=row[2],
+                    company=row[3],
+                    props=_clean_props(row[4]),
+                )
+                subgraph.add_edge(
+                    source=row[7],
+                    target=row[8],
+                    rel_type=row[5],
+                    props=_clean_props(row[6]),
+                )
+                hop1_ids.append(row[0])
+
+            # Optional 2nd hop if focus_hops >= 2
+            if focus_hops >= 2 and hop1_ids and len(subgraph.nodes) < node_limit:
+                rem_limit = max(0, rel_limit - len(subgraph.edges))
+                if rem_limit > 0:
+                    hop2_q = f"""
+                        MATCH (h1)-[r]-(neighbor)
+                        WHERE h1.id IN $hop1_ids AND neighbor.id <> $center_id
+                        RETURN neighbor.id as n_id,
+                               coalesce(neighbor.name, neighbor.title, neighbor.summary, neighbor.id) as n_name,
+                               labels(neighbor)[0] as n_label,
+                               coalesce(neighbor.company_origin, 'External') as n_company,
+                               properties(neighbor) as n_props,
+                               type(r) as r_type,
+                               properties(r) as r_props,
+                               startNode(r).id as src_id,
+                               endNode(r).id as tgt_id
+                        LIMIT {rem_limit}
+                    """
+                    hop2_res = g.query(hop2_q, {"hop1_ids": hop1_ids, "center_id": center_id})
+                    for row in hop2_res.result_set:
+                        if len(subgraph.nodes) >= node_limit:
+                            break
+                        subgraph.add_node(
+                            node_id=row[0],
+                            name=row[1],
+                            label=row[2],
+                            company=row[3],
+                            props=_clean_props(row[4]),
+                        )
+                        subgraph.add_edge(
+                            source=row[7],
+                            target=row[8],
+                            rel_type=row[5],
+                            props=_clean_props(row[6]),
+                        )
+            return subgraph
+
+    # Case 2: Global visualization graph with prioritized relationships
+    # Priority Phase 1: Bridge & Conflict relationships
+    p1_q = f"""
+        MATCH (a)-[r:CONFLICTS_WITH|REDUNDANT_WITH|SUPERSEDES]->(b)
+        RETURN a.id as a_id,
+               coalesce(a.name, a.title, a.summary, a.id) as a_name,
+               labels(a)[0] as a_label,
+               coalesce(a.company_origin, 'External') as a_company,
+               properties(a) as a_props,
+               b.id as b_id,
+               coalesce(b.name, b.title, b.summary, b.id) as b_name,
+               labels(b)[0] as b_label,
+               coalesce(b.company_origin, 'External') as b_company,
+               properties(b) as b_props,
+               type(r) as r_type,
+               properties(r) as r_props
         LIMIT {rel_limit}
     """
-    rel_res = g.query(rel_query)
-    for row in rel_res.result_set:
-        if row[0] in valid_node_ids and row[1] in valid_node_ids:
-            props = dict(row[3]) if isinstance(row[3], dict) else {}
-            props.pop("embedding", None)
-            subgraph.add_edge(
-                source=row[0],
-                target=row[1],
-                rel_type=row[2],
-                props=props,
+    p1_res = g.query(p1_q)
+    for row in p1_res.result_set:
+        subgraph.add_node(node_id=row[0], name=row[1], label=row[2], company=row[3], props=_clean_props(row[4]))
+        subgraph.add_node(node_id=row[5], name=row[6], label=row[7], company=row[8], props=_clean_props(row[9]))
+        subgraph.add_edge(source=row[0], target=row[5], rel_type=row[10], props=_clean_props(row[11]))
+
+    # Priority Phase 2: Core structural & governance relationships
+    remaining_rels = rel_limit - len(subgraph.edges)
+    if remaining_rels > 0 and len(subgraph.nodes) < node_limit:
+        p2_q = f"""
+            MATCH (a)-[r:GOVERNED_BY|OWNS|MEMBER_OF|DECIDED_BY|DEPENDS_ON]->(b)
+            RETURN a.id as a_id,
+                   coalesce(a.name, a.title, a.summary, a.id) as a_name,
+                   labels(a)[0] as a_label,
+                   coalesce(a.company_origin, 'External') as a_company,
+                   properties(a) as a_props,
+                   b.id as b_id,
+                   coalesce(b.name, b.title, b.summary, b.id) as b_name,
+                   labels(b)[0] as b_label,
+                   coalesce(b.company_origin, 'External') as b_company,
+                   properties(b) as b_props,
+                   type(r) as r_type,
+                   properties(r) as r_props
+            LIMIT {remaining_rels}
+        """
+        p2_res = g.query(p2_q)
+        for row in p2_res.result_set:
+            if len(subgraph.edges) >= rel_limit:
+                break
+            existing_ids = {n.id for n in subgraph.nodes}
+            if row[0] not in existing_ids and len(subgraph.nodes) >= node_limit:
+                continue
+            if row[5] not in existing_ids and len(subgraph.nodes) >= node_limit:
+                continue
+            subgraph.add_node(node_id=row[0], name=row[1], label=row[2], company=row[3], props=_clean_props(row[4]))
+            subgraph.add_node(node_id=row[5], name=row[6], label=row[7], company=row[8], props=_clean_props(row[9]))
+            subgraph.add_edge(source=row[0], target=row[5], rel_type=row[10], props=_clean_props(row[11]))
+
+    # Priority Phase 3: Other relationships
+    remaining_rels = rel_limit - len(subgraph.edges)
+    if remaining_rels > 0 and len(subgraph.nodes) < node_limit:
+        p3_q = f"""
+            MATCH (a)-[r]->(b)
+            WHERE NOT type(r) IN ['CONFLICTS_WITH', 'REDUNDANT_WITH', 'SUPERSEDES', 'GOVERNED_BY', 'OWNS', 'MEMBER_OF', 'DECIDED_BY', 'DEPENDS_ON']
+            RETURN a.id as a_id,
+                   coalesce(a.name, a.title, a.summary, a.id) as a_name,
+                   labels(a)[0] as a_label,
+                   coalesce(a.company_origin, 'External') as a_company,
+                   properties(a) as a_props,
+                   b.id as b_id,
+                   coalesce(b.name, b.title, b.summary, b.id) as b_name,
+                   labels(b)[0] as b_label,
+                   coalesce(b.company_origin, 'External') as b_company,
+                   properties(b) as b_props,
+                   type(r) as r_type,
+                   properties(r) as r_props
+            LIMIT {remaining_rels}
+        """
+        p3_res = g.query(p3_q)
+        for row in p3_res.result_set:
+            if len(subgraph.edges) >= rel_limit:
+                break
+            existing_ids = {n.id for n in subgraph.nodes}
+            if row[0] not in existing_ids and len(subgraph.nodes) >= node_limit:
+                continue
+            if row[5] not in existing_ids and len(subgraph.nodes) >= node_limit:
+                continue
+            subgraph.add_node(node_id=row[0], name=row[1], label=row[2], company=row[3], props=_clean_props(row[4]))
+            subgraph.add_node(node_id=row[5], name=row[6], label=row[7], company=row[8], props=_clean_props(row[9]))
+            subgraph.add_edge(source=row[0], target=row[5], rel_type=row[10], props=_clean_props(row[11]))
+
+    # Priority Phase 4: Fill remaining node quota with remaining nodes
+    remaining_nodes = node_limit - len(subgraph.nodes)
+    if remaining_nodes > 0:
+        existing_ids = [n.id for n in subgraph.nodes]
+        p4_q = f"""
+            MATCH (n)
+            RETURN n.id as id,
+                   coalesce(n.name, n.title, n.summary, n.id) as display_name,
+                   labels(n)[0] as label,
+                   coalesce(n.company_origin, 'External') as company,
+                   properties(n) as props
+            LIMIT {remaining_nodes + len(existing_ids)}
+        """
+        p4_res = g.query(p4_q)
+        for row in p4_res.result_set:
+            if len(subgraph.nodes) >= node_limit:
+                break
+            subgraph.add_node(
+                node_id=row[0],
+                name=row[1],
+                label=row[2],
+                company=row[3],
+                props=_clean_props(row[4]),
             )
 
     return subgraph
+
 

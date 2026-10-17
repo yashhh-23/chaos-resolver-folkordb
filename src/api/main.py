@@ -6,7 +6,7 @@ and live visual subgraph payloads for the Next.js War Room dashboard.
 """
 
 from typing import Optional, Dict, Any, List
-from fastapi import FastAPI, HTTPException, Body, Depends
+from fastapi import FastAPI, HTTPException, Body, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, model_validator
 
@@ -284,10 +284,44 @@ def chat_with_agent(req: ChatRequest):
 
 
 @app.get("/api/graph/subgraph", response_model=Subgraph)
-def get_graph_visualization(graph: Optional[str] = None):
-    """Returns nodes and edges for visual rendering in Next.js react-force-graph-2d."""
+def get_graph_visualization(
+    graph: Optional[str] = Query(default=None),
+    node_limit: int = Query(default=150, ge=1, le=1000),
+    rel_limit: int = Query(default=250, ge=1, le=1000),
+    focus_node_id: Optional[str] = Query(default=None),
+    focus_hops: int = Query(default=1, ge=1, le=3),
+):
+    """Returns nodes and edges for visual rendering in Next.js react-force-graph-2d.
+
+    Prioritizes cross-company bridge and conflict relationships, ensuring endpoints
+    are always included. Supports focus_node_id and focus_hops for neighborhood exploration.
+    """
     target_graph = validate_graph(graph)
-    return fetch_visualization_subgraph(target_graph)
+    return fetch_visualization_subgraph(
+        graph_name=target_graph,
+        node_limit=node_limit,
+        rel_limit=rel_limit,
+        focus_node_id=focus_node_id,
+        focus_hops=focus_hops,
+    )
+
+
+@app.get("/api/graph/neighborhood/{node_id:path}", response_model=Subgraph)
+def get_node_neighborhood(
+    node_id: str,
+    graph: Optional[str] = Query(default=None),
+    hops: int = Query(default=1, ge=1, le=3),
+    rel_limit: int = Query(default=100, ge=1, le=500),
+):
+    """Returns the subgraph neighborhood around a specific node (by ID) up to the specified hops."""
+    target_graph = validate_graph(graph)
+    return fetch_visualization_subgraph(
+        graph_name=target_graph,
+        node_limit=200,
+        rel_limit=rel_limit,
+        focus_node_id=node_id,
+        focus_hops=hops,
+    )
 
 
 # Live Mutation Endpoints (Phase 5 - Track 03: Keeping Knowledge Current)
