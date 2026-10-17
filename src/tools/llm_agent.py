@@ -61,6 +61,24 @@ class LLMAgent:
         if settings.groq_api_key and Groq is not None:
             try:
                 self.groq_client = Groq(api_key=settings.groq_api_key)
+                try:
+                    available = {m.id for m in self.groq_client.models.list().data}
+                    candidates = [
+                        self.model,
+                        "qwen/qwen3.8-27b",
+                        "openai/gpt-oss-120b",
+                        "openai/gpt-oss-20b",
+                        "llama-3.3-70b-versatile",
+                        "llama-3.1-70b-versatile",
+                        "llama3-70b-8192",
+                    ]
+                    for candidate in candidates:
+                        if candidate in available:
+                            self.model = candidate
+                            break
+                except Exception as model_err:
+                    logger.debug("Could not query Groq models list: %s", model_err)
+
                 logger.info(f"Initialized Groq LLMAgent with model {self.model}")
             except Exception as e:
                 logger.warning(f"Failed to initialize Groq client: {e}")

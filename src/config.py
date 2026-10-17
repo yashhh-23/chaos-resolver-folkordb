@@ -1,5 +1,6 @@
 from pathlib import Path
 from typing import Optional
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -40,6 +41,14 @@ class Settings(BaseSettings):
     # General
     environment: str = "development"
     log_level: str = "INFO"
+
+    @field_validator("groq_api_key", "openai_api_key", "falkordb_host", "falkordb_password", mode="before")
+    @classmethod
+    def strip_whitespace(cls, v: Optional[str]) -> Optional[str]:
+        if isinstance(v, str):
+            v_stripped = v.strip()
+            return v_stripped if v_stripped else None
+        return v
 
     model_config = SettingsConfigDict(
         env_file=(str(PROJECT_ROOT / ".env"), ".env"),
