@@ -14,15 +14,16 @@
 
 ---
 
-## Architecture & Phase 1 Highlights
+## Architecture & System Highlights
 
-During an M&A (e.g., FinPay acquiring Vaultly), organizations face duplicate microservices, conflicting compliance policies, fractured org structures, and tribal knowledge silos. Flat vector RAG fails here because it cannot reason across tenants or evaluate graph paths.
+During an M&A (e.g., FinPay acquiring Vaultly), organizations face duplicate microservices, conflicting compliance policies, fractured org structures, and tribal knowledge silos. Flat vector RAG fails here because it cannot reason across tenants, trace governance lineages, or evaluate bounded graph paths.
 
-OrgBridge AI leverages **FalkorDB** as the heart of the system across four core capabilities:
+OrgBridge AI leverages **FalkorDB** as the central brain of the system across four core capabilities:
 1. **Multigraph Tenancy**: Physical graph isolation (`finpay_graph` for Company A, `vaultly_graph` for Company B) and an integrated layer (`merged_brain`) for cross-company entity resolution.
 2. **Hybrid Graph + Vector Entity Resolution**: Identifies redundant systems and policy contradictions with shared external dependencies (`ExternalAPI` like UIDAI Aadhaar, Stripe, AWS KMS).
 3. **Graph-Powered Agent Tools**: SME influence ranking (evaluating stored PageRank centrality properties alongside authored RFCs & resolved incidents) and bounded path traversal (`[*1..4]`) for warm introductions across company borders.
 4. **Decision & Policy Conflict Lineage**: Explicit `[:CONFLICTS_WITH]` and `[:DERIVED_FROM]` edges tracing rules directly back to source Slack threads, Jira tickets, and RFC documents.
+5. **Real-Time Knowledge Currency (Track 03)**: Live transactional Cypher `MERGE`, `SET`, and edge relinking engine that dynamically mutates the graph as leadership and architects resolve conflicts.
 
 ---
 
@@ -30,9 +31,11 @@ OrgBridge AI leverages **FalkorDB** as the heart of the system across four core 
 
 ```
 chaos-resolver-folkordb/
-├── docker-compose.yml              # FalkorDB local container configuration
-├── .env.example                    # Environment variable template (local or FalkorDB Cloud)
-├── requirements.txt                # Python dependencies
+├── docker-compose.yml              # Complete 3-tier local stack orchestration (FalkorDB + FastAPI + Next.js)
+├── Dockerfile                      # Production Dockerfile for FastAPI backend (Python 3.11-slim)
+├── .dockerignore                   # Docker build context optimizations
+├── .env.example                    # Environment variable template (local Docker or FalkorDB Cloud)
+├── requirements.txt                # Python backend dependencies
 ├── artifacts/                      # Generated ingestion artifacts
 │   ├── cypher/                     # Exported runnable Cypher scripts
 │   │   ├── finpay_graph.cypher     # FinPay isolated graph (69 statements)
@@ -40,11 +43,11 @@ chaos-resolver-folkordb/
 │   │   └── merged_brain.cypher     # Unified brain with bridge edges (129 statements)
 │   └── dataset.json                # Structured JSON representation
 ├── src/
-│   ├── config.py                   # Centralized Pydantic settings
+│   ├── config.py                   # Centralized Pydantic settings & environment configuration
 │   ├── db/
 │   │   └── client.py               # FalkorDB client with index manager & query sanitizer
 │   ├── schema/
-│   │   ├── models.py               # Strict Pydantic models (Person, Team, System, etc.)
+│   │   ├── models.py               # Strict Pydantic models (Person, Team, System, Document, etc.)
 │   │   └── cypher_schema.py        # Schema labels, relationships, indexing, & Cypher generators
 │   ├── embeddings/
 │   │   └── service.py              # Normalized 384-dim semantic embedding service (Local & OpenAI)
@@ -66,18 +69,17 @@ chaos-resolver-folkordb/
 │   └── utils/
 │       └── logger.py               # Standardized application logging
 ├── frontend/                       # Next.js 14 App Router War-Room Dashboard
-│   ├── app/page.tsx                # Split-screen agent chat & real-time canvas with Tenant Selector Pill
-│   ├── components/GraphCanvas.tsx  # Force-directed dynamic 2D graph with active path isolation
-│   ├── components/ChatPanel.tsx    # Agent chat, one-click judge prompts & live mutation action bar
+│   ├── Dockerfile                  # Multi-stage production Dockerfile for Next.js (Node 20-alpine)
+│   ├── .dockerignore               # Frontend Docker build exclusions
+│   ├── app/page.tsx                # Split-screen agent chat & real-time canvas with draggable resizer splitter
+│   ├── components/GraphCanvas.tsx  # Force-directed 2D graph with ResizeObserver, zoom/fit/fullscreen controls
+│   ├── components/ChatPanel.tsx    # Agent chat, thinking drawer, crisis prompts & live mutation action bar
 │   └── components/NodeInspectorModal.tsx # Node attribute inspector drawer
 └── tests/
     ├── test_schema_and_dataset.py  # Schema, edge integrity, collision guards (9 tests)
     ├── test_auto_linker.py         # Vector embeddings & auto-linker resolution (5 tests)
     ├── test_agent_tools.py         # Agent tools, MCP schema, WCC, /api/chat & FastAPI endpoints (10 tests)
     └── test_live_mutations.py      # Live graph mutations, Cypher MERGE/SET updates (4 tests)
-
-
-
 ```
 
 ---
@@ -128,11 +130,53 @@ chaos-resolver-folkordb/
 
 ---
 
-## Quickstart & Seeding
+## Running the Project with Docker (Full Local Stack)
+
+The project includes an executable `docker-compose.yml` that orchestrates all 3 tiers with a single command:
+- **`falkordb`**: Official `falkordb/falkordb:latest` on port `6379` with health checks and persistent volume
+- **`backend`**: FastAPI backend on port `8000` with automated health recovery and Groq agent support
+- **`frontend`**: Next.js 14 War Room dashboard on port `3000` with real-time Force Graph canvas
+
+### 1. Start All Services
+```bash
+docker compose up --build -d
+```
+
+### 2. Verify Container Health
+```bash
+docker ps
+```
+You will see 3 running containers:
+- `orgbridge-frontend` (`0.0.0.0:3000->3000`)
+- `orgbridge-backend` (`0.0.0.0:8000->8000`)
+- `falkordb-m-and-a` (`0.0.0.0:6379->6379`, healthy)
+
+### 3. Check Backend Health
+```bash
+curl http://localhost:8000/api/health
+```
+Response:
+```json
+{"status":"healthy","falkordb_connected":true,"environment":"development","active_graphs":["finpay_graph","vaultly_graph","merged_brain"]}
+```
+
+### 4. Access the War Room Dashboard
+Open your browser at:
+- **http://localhost:3000**
+
+### 5. Stop All Services
+```bash
+docker compose down
+```
+
+---
+
+## Local Development (Without Docker)
 
 ### 1. Install Dependencies
 ```bash
 pip install -r requirements.txt
+cd frontend && npm install && cd ..
 ```
 
 ### 2. Configure Environment
@@ -140,11 +184,7 @@ Copy `.env.example` to `.env`:
 ```bash
 cp .env.example .env
 ```
-For local Docker:
-```bash
-docker-compose up -d
-```
-Or set `FALKORDB_URL` in `.env` for FalkorDB Cloud.
+Set your FalkorDB credentials (local `localhost:6379` or FalkorDB Cloud) and `GROQ_API_KEY`.
 
 ### 3. Generate Artifacts & Seed Database
 Export Cypher scripts and JSON without requiring an active database:
@@ -166,7 +206,7 @@ Or run interactively inside the CLI:
 python -m src.cli auto-link --graph merged_brain
 ```
 
-### 5. Run Phase 3 Deterministic Agent Tools & Conversational Agent (CLI / MCP / REST)
+### 5. Run Phase 3 Deterministic Agent Tools (CLI / REST / MCP)
 Execute any of the 6 core tools with human-readable evidence and visual Subgraph JSON:
 ```bash
 # 1. SME Expert Discovery (PageRank property + authored RFCs)
@@ -191,7 +231,7 @@ python -m src.cli tool silos
 curl -X POST http://localhost:8000/api/chat -H "Content-Type: application/json" -d '{"prompt": "Show me disconnected organizational silos"}'
 ```
 
-### 6. Launch FastAPI REST & Subgraph Visualization Server
+### 6. Launch FastAPI REST Server
 ```bash
 python -m src.cli serve --port 8000
 ```
@@ -199,22 +239,35 @@ Interactive Swagger API documentation will be available at:
 - **http://localhost:8000/docs**
 
 ### 7. Launch Next.js "War Room" Dashboard (Phase 4)
-In a separate terminal, launch the split-screen interactive dashboard:
+In a separate terminal:
 ```bash
 npm run dev --prefix frontend
 ```
 Open your browser at:  
 - **http://localhost:3000**
 
-Features:
+#### Dashboard UI Features:
 - **Tenant Selector Pill**: Switch live views between `FinPay (Isolated)`, `Vaultly (Isolated)`, and `Merged Brain` (paired with an SVG Brain icon).
-- **Left Panel**: Autonomous Agent Chat with one-click M&A Crisis Prompts, source citations (Slack thread, RFC doc, Jira ticket), and active path triggers.
-- **Right Panel**: Interactive `react-force-graph-2d` live canvas color-coded by company origin: FinPay (Blue), Vaultly (Orange), Unified Post-M&A (Emerald), Shared/External (Purple), with CONFLICTS_WITH (Red) and REDUNDANT_WITH (Green) edges.
-- **Active Subgraph Highlighting**: Automatically isolates, zooms, and pulses the exact nodes and relationships traversed when an agent question is answered.
+- **Draggable Resizer Splitter**: Interactive draggable handle between the Chatbot panel and Graph canvas with mouse tracking (`280px` min up to `75%` viewport width) and fluid `ResizeObserver` re-rendering.
+- **Floating Canvas Controls**:
+  - **Zoom In (`+`)**: Smooth animated zoom scaling ($\times 1.35$)
+  - **Zoom Out (`-`)**: Smooth animated zoom scaling ($\times 0.70$)
+  - **Fit View (`RotateCcw`)**: Calculates the node bounding box and centers all entities
+  - **Fullscreen Toggle (`Maximize2` / `Minimize2`)**: Expands the graph to full 100% canvas width with one-click restoration
+  - **Subgraph Isolation (`Layers`)**: Toggle to isolate and focus only on tool-traversed paths
+- **Autonomous Agent Chat**:
+  - **Expandable "Thinking Process" Drawer**: Separates internal Cypher logic and synthesis steps from clean user-facing answers
+  - **Severity Badges**: Color-coded badges for `[CRITICAL]`, `[HIGH]`, `[MEDIUM]`, and `[LOW]` conflict levels
+  - **One-Click M&A Crisis Prompts**: Instant triggers for SME expert lookup, policy conflicts, redundant systems, and warm intros
+  - **Live Mutation Action Bar**: Direct trigger for transactional graph updates
+- **Right Panel Canvas**: Interactive `react-force-graph-2d` live canvas color-coded by company origin: FinPay (Blue), Vaultly (Orange), Unified Post-M&A (Emerald), Shared/External (Purple), with CONFLICTS_WITH (Red) and REDUNDANT_WITH (Green) edges.
 - **Node Inspector Drawer**: Click any node on the canvas to inspect its full properties, architecture domain, and tenant provenance.
 
-### 8. Phase 5: Live Graph Mutations (Track 03 Hardening)
-Satisfying Track 03's primary requirement — **"Keeping knowledge current as things change"**:
+---
+
+## Phase 5: Live Graph Mutations (Track 03 Hardening)
+
+Satisfying Track 03's primary requirement — **"Keeping knowledge current as things change"**:  
 When architects and leaders make decisions, they mutate the knowledge graph in real-time using transactional Cypher `MERGE`, `SET`, and edge relinking.
 
 You can trigger live mutations from the **War-Room UI buttons** or directly via CLI:
@@ -232,16 +285,16 @@ python -m src.cli mutate merge-teams
 python -m src.cli mutate reset-demo
 ```
 
-### 9. Run Test Suite
+---
+
+## Test Suite Verification
+
+Run the full pytest suite locally:
 ```bash
 pytest tests/ -v
 ```
 All **28 unit & integration tests** pass across:
-- Multigraph schema integrity, node collisions, and bridge relations (`test_schema_and_dataset.py` - 9 tests)
-- Dense 384-dim normalized vector embeddings, hybrid auto-linker, and threshold filtering (`test_auto_linker.py` - 5 tests)
-- Deterministic M&A agent tools, WCC, MCP schemas, /api/chat, & FastAPI endpoints (`test_agent_tools.py` - 10 tests)
-- Live graph mutations, transactional Cypher updates, and Track 03 real-time state maintenance (`test_live_mutations.py` - 4 tests)
-
-
-
-
+- **Multigraph schema integrity, node collisions, and bridge relations** (`test_schema_and_dataset.py` - 9 tests)
+- **Dense 384-dim normalized vector embeddings, hybrid auto-linker, and threshold filtering** (`test_auto_linker.py` - 5 tests)
+- **Deterministic M&A agent tools, WCC, MCP schemas, /api/chat & FastAPI endpoints** (`test_agent_tools.py` - 10 tests)
+- **Live graph mutations, transactional Cypher updates, and Track 03 real-time state maintenance** (`test_live_mutations.py` - 4 tests)
