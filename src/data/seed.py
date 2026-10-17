@@ -8,7 +8,7 @@ Populates:
 
 import argparse
 import sys
-from typing import Dict, List
+from typing import Dict, List, Any
 from src.config import settings
 from src.utils.logger import logger
 from src.db.client import db_client
@@ -18,11 +18,12 @@ from src.data.builder import (
 )
 
 
-def seed_graph(graph_name: str, queries: List[str], clear_first: bool = False) -> Dict[str, int]:
-    """Executes a list of Cypher queries on the specified FalkorDB graph."""
+def seed_graph(graph_name: str, queries: List[str], clear_first: bool = False) -> Dict[str, Any]:
+    """Executes a list of Cypher queries on the specified FalkorDB graph with post-seeding invariant verification."""
     graph = db_client.get_graph(graph_name)
     success_count = 0
     error_count = 0
+    failed_details: List[Dict[str, Any]] = []
 
     if clear_first:
         try:
@@ -37,28 +38,69 @@ def seed_graph(graph_name: str, queries: List[str], clear_first: bool = False) -
             graph.query(query)
             success_count += 1
         except Exception as e:
-            # Safe ignore for already existing index
-            if "already exists" in str(e).lower() or "equivalent index" in str(e).lower():
+            # Safe ignore for already existing index in FalkorDB
+            err_str = str(e).lower()
+            if any(sub in err_str for sub in ["already exists", "equivalent index", "already indexed"]):
                 success_count += 1
             else:
                 logger.error(f"[{graph_name}] Error executing query #{idx}: {query} -> {e}")
                 error_count += 1
+                failed_details.append({"query_index": idx, "query": query, "error": str(e)})
 
-    logger.info(f"[{graph_name}] Completed: {success_count} succeeded, {error_count} failed.")
-    return {"success": success_count, "failed": error_count}
+    # Post-seeding invariant verification: Validate that expected nodes and relationships exist
+    try:
+        node_res = graph.query("MATCH (n) RETURN count(n) as node_count")
+        rel_res = graph.query("MATCH ()-[r]->() RETURN count(r) as rel_count")
+        node_count = node_res.result_set[0][0] if node_res.result_set else 0
+        rel_count = rel_res.result_set[0][0] if rel_res.result_set else 0
+    except Exception as e:
+        node_count = 0
+        rel_count = 0
+        error_count += 1
+        failed_details.append({"invariant_check": "node_rel_count", "error": str(e)})
+
+    is_success = (error_count == 0) and (node_count > 0)
+    logger.info(
+        f"[{graph_name}] Completed: {success_count} succeeded, {error_count} failed. "
+        f"Post-seed nodes: {node_count}, rels: {rel_count}"
+    )
+
+    return {
+        "status": "success" if is_success else "failed",
+        "success": success_count,
+        "failed": error_count,
+        "node_count": node_count,
+        "rel_count": rel_count,
+        "errors": failed_details,
+    }
 
 
-def seed_all_graphs(clear_first: bool = False) -> Dict[str, Dict[str, int]]:
-    """Seeds finpay_graph, vaultly_graph, and merged_brain in FalkorDB."""
+def seed_all_graphs(clear_first: bool = False) -> Dict[str, Any]:
+    """Seeds finpay_graph, vaultly_graph, and merged_brain in FalkorDB with strict verification across all graphs."""
     scripts = generate_graph_cypher_scripts()
     summary = {}
+    total_failed = 0
 
     for graph_name, queries in scripts.items():
         logger.info(f"=== Seeding {graph_name} ===")
         res = seed_graph(graph_name, queries, clear_first=clear_first)
         summary[graph_name] = res
+        total_failed += res.get("failed", 0)
+        if res.get("status") != "success":
+            total_failed += 1
 
-    return summary
+    overall_status = "success" if total_failed == 0 else "failed"
+
+    # Return structure with both top-level graph keys (for backwards compatibility) and overall status
+    result = {
+        "status": overall_status,
+        "total_failures": total_failed,
+        "graphs": summary,
+    }
+    for g_name, g_res in summary.items():
+        result[g_name] = g_res
+
+    return result
 
 
 def verify_graphs():

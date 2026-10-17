@@ -138,6 +138,31 @@ class LiveMutationEngine:
         """
         graph.query(relink_query, {"dec_id": dec_id})
 
+        # Step 4: Post-Mutation Verification (B10)
+        verify_query = """
+            MATCH (pol:Policy {id: 'unified:pol:hybrid_session_auth'})
+            MATCH (dec:Decision {id: $dec_id})
+            RETURN pol.status, dec.status
+        """
+        v_res = graph.query(verify_query, {"dec_id": dec_id}).result_set
+        if not v_res or v_res[0][0] != "ACTIVE" or v_res[0][1] != "ACTIVE":
+            raise RuntimeError(
+                f"Post-mutation verification failed: Unified policy or decision '{dec_id}' was not created in ACTIVE state."
+            )
+
+        if self.graph_name == settings.graph_merged:
+            gov_query = """
+                MATCH (s:System)-[:GOVERNED_BY]->(pol:Policy {id: 'unified:pol:hybrid_session_auth'})
+                WHERE s.id IN ['finpay:sys:gatekeeper_auth', 'vaultly:sys:pulse_identity']
+                RETURN count(s) as governed_systems
+            """
+            gov_res = graph.query(gov_query).result_set
+            gov_count = gov_res[0][0] if gov_res else 0
+            if gov_count < 2:
+                raise RuntimeError(
+                    f"Post-mutation verification failed: Expected 2 systems governed by unified policy, found {gov_count}."
+                )
+
         # Build Subgraph of resolved state
         subgraph.add_node("unified:pol:hybrid_session_auth", "Unified M&A Adaptive Session Policy", "Policy", "Unified", {"status": "ACTIVE"})
         subgraph.add_node(dec_id, dec_label, "Decision", "Unified", {"status": "ACTIVE"})
@@ -158,6 +183,11 @@ class LiveMutationEngine:
             "unified_policy_id": "unified:pol:hybrid_session_auth",
             "unified_decision_id": dec_id,
             "resolved_conflict": "FinPay 15-min JWT vs Vaultly 7-day Session",
+            "post_verification": {
+                "verified": True,
+                "policy_status": "ACTIVE",
+                "decision_status": "ACTIVE",
+            },
             "resolution_summary": (
                 f"Established 'Unified M&A Adaptive Session Policy' ({compromise_ttl_minutes}-minute session tokens with biometric refresh). "
                 "Deprecated conflicting legacy policies and re-governed Gatekeeper-Auth and Pulse-Identity under the unified security standard."
@@ -275,6 +305,18 @@ class LiveMutationEngine:
             "effective_date": today_date,
         })
 
+        # Post-Mutation Verification (B10)
+        verify_query = """
+            MATCH (pol:Policy {id: $pol_id})
+            MATCH (dec:Decision {id: $dec_id})
+            RETURN pol.status, dec.status, pol.domain
+        """
+        v_res = graph.query(verify_query, {"pol_id": pol_id, "dec_id": dec_id}).result_set
+        if not v_res or v_res[0][0] != "ACTIVE" or v_res[0][1] != "ACTIVE" or v_res[0][2] != "Data Retention":
+            raise RuntimeError(
+                f"Post-mutation verification failed: Unified policy '{pol_id}' was not created in ACTIVE state."
+            )
+
         subgraph.add_node(pol_id, pol_label, "Policy", "Unified", {"status": "ACTIVE"})
         subgraph.add_node(dec_id, dec_label, "Decision", "Unified", {"status": "ACTIVE"})
         subgraph.add_node("finpay:sys:finpay_mesh_gateway", "FinPay-Mesh-Gateway", "System", "FinPay")
@@ -294,6 +336,12 @@ class LiveMutationEngine:
             "unified_policy_id": pol_id,
             "unified_decision_id": dec_id,
             "resolved_conflict": "FinPay 30-day purge vs Vaultly 180-day forensic audit",
+            "post_verification": {
+                "verified": True,
+                "policy_id": pol_id,
+                "policy_status": "ACTIVE",
+                "decision_status": "ACTIVE",
+            },
             "resolution_summary": (
                 f"Enacted 'Unified M&A Tiered Log & Audit Retention Policy' ({retention_days}-day encrypted cold storage for compliance). "
                 "Deprecated conflicting retention policies and unified platform audit logging across both organizations."
@@ -541,19 +589,43 @@ class LiveMutationEngine:
         }
 
     def reset_demo(self, include_subgraph: bool = True) -> Dict[str, Any]:
-        """Resets FalkorDB multigraphs to pristine initial Phase 1/2 state."""
+        """Resets FalkorDB multigraphs to pristine initial Phase 1/2 state with multi-stage verification (B10)."""
         from src.data.seed import seed_all_graphs
         from src.pipeline.auto_linker import auto_linker_engine
 
-        logger.info(f"[{self.graph_name}] Resetting demo multigraphs in FalkorDB...")
-        seed_all_graphs(clear_first=True)
-        pipeline_summary = auto_linker_engine.run_pipeline(self.graph_name)
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        logger.info(f"[{self.graph_name}] Resetting demo multigraphs in FalkorDB with multi-stage verification...")
+
+        # Stage 1: Seeding with strict failure check
+        seed_result = seed_all_graphs(clear_first=True)
+        if seed_result.get("status") != "success" or seed_result.get("total_failures", 0) > 0:
+            err_msg = f"Reset failed during graph seeding stage: {seed_result.get('total_failures')} statement(s) failed."
+            logger.error(f"[{self.graph_name}] {err_msg}")
+            raise RuntimeError(err_msg)
+
+        # Stage 2: Entity resolution and auto-linker pipeline
+        pipeline_summary = auto_linker_engine.run_pipeline(self.graph_name)
+
+        # Stage 3: Post-verification check of target graph
+        graph = self._get_graph()
+        try:
+            cnt_res = graph.query("MATCH (n) RETURN count(n) as node_count").result_set
+            node_cnt = cnt_res[0][0] if cnt_res else 0
+        except Exception as e:
+            raise RuntimeError(f"Post-reset verification failed: {e}")
+
+        if node_cnt == 0:
+            raise RuntimeError(f"Post-reset verification failed: Graph '{self.graph_name}' has 0 nodes after reset.")
 
         result: Dict[str, Any] = {
             "action": "reset_demo",
             "status": "success",
             "timestamp": now_str,
+            "stages": {
+                "seeding": {"status": "success", "graphs_seeded": list(seed_result.get("graphs", {}).keys())},
+                "auto_linker": {"status": "success", "bridges_linked": pipeline_summary.get("total_bridges_created", 0)},
+                "verification": {"status": "success", "node_count": node_cnt},
+            },
             "message": "FalkorDB multigraphs reset and auto-linked successfully.",
             "pipeline_summary": pipeline_summary,
         }

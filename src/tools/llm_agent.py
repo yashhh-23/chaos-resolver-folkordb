@@ -9,10 +9,17 @@ Falls back seamlessly to deterministic graph traversal when GROQ_API_KEY is unse
 from typing import Dict, Any, List, Optional
 import json
 import re
+import concurrent.futures
 from src.config import settings
 from src.db.client import db_client
 from src.utils.logger import logger
-from src.schema.cypher_schema import sanitize_cypher_query, ALLOWED_LABELS, ALLOWED_RELATIONSHIPS
+from src.schema.cypher_schema import (
+    sanitize_cypher_query,
+    validate_readonly_cypher,
+    CYPHER_TEMPLATES,
+    ALLOWED_LABELS,
+    ALLOWED_RELATIONSHIPS,
+)
 from src.tools.graph_tools import agent_tools, GraphAgentTools, ToolResult, Subgraph
 from src.tools.mcp_server import MCP_TOOL_DEFINITIONS, execute_tool
 
@@ -132,204 +139,276 @@ class LLMAgent:
         })
         return specs
 
+    def execute_cypher_template(
+        self,
+        template_key: str,
+        params: Dict[str, Any],
+        graph_name: str,
+        user_prompt: str = "",
+        timeout_seconds: float = 5.0,
+    ) -> ToolResult:
+        """Executes a predefined, parameterized read-only Cypher query template (B9)."""
+        template_info = CYPHER_TEMPLATES.get(template_key)
+        if not template_info:
+            return ToolResult(
+                tool_name="parameterized_cypher_template",
+                status="error",
+                text_answer=f"Unknown Cypher query template: '{template_key}'. Available templates: {list(CYPHER_TEMPLATES.keys())}",
+                subgraph=Subgraph(),
+            )
+
+        query = template_info["template"]
+        call_params = dict(params)
+        call_params.setdefault("limit", 25)
+
+        graph = db_client.get_graph(graph_name)
+        subgraph = Subgraph()
+
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(graph.query, query, call_params)
+                res = future.result(timeout=timeout_seconds)
+            rows = res.result_set
+            headers = [h[1] if isinstance(h, (tuple, list)) and len(h) > 1 else str(h) for h in res.header] if hasattr(res, "header") and res.header else []
+
+            text_lines = [f"Found {len(rows)} record(s) matching template '{template_key}':"]
+            for r in rows[:10]:
+                text_lines.append(f"- {', '.join(str(val) for val in r if val is not None)}")
+
+            return ToolResult(
+                tool_name="parameterized_cypher_template",
+                status="success",
+                text_answer="\n".join(text_lines),
+                details={"template": template_key, "params": call_params, "record_count": len(rows)},
+                subgraph=subgraph,
+            )
+        except concurrent.futures.TimeoutError:
+            return ToolResult(
+                tool_name="parameterized_cypher_template",
+                status="error",
+                text_answer=f"**Execution Safeguard**: Query execution timed out after {timeout_seconds} seconds.",
+                subgraph=subgraph,
+            )
+        except Exception as e:
+            return ToolResult(
+                tool_name="parameterized_cypher_template",
+                status="error",
+                text_answer=f"Error executing template '{template_key}': {e}",
+                subgraph=subgraph,
+            )
+
     def _execute_cypher(
         self,
         query: str,
         explanation: str,
         graph_name: str,
         user_prompt: str = "",
+        timeout_seconds: float = 5.0,
     ) -> ToolResult:
-        """Executes a schema-constrained, sanitized Cypher query and formats the result."""
-        # Enforce read-only constraint
-        upper = query.upper()
-        for forbidden in ["DROP", "DELETE", "DETACH", "CREATE", "SET", "MERGE", "REMOVE"]:
-            if re.search(rf"\b{forbidden}\b", upper):
-                return ToolResult(
-                    tool_name="schema_constrained_cypher",
-                    status="error",
-                    text_answer=f"**Security Violation**: Destructive or mutating Cypher statement `{forbidden}` is prohibited in text-to-Cypher.",
-                    subgraph=Subgraph(),
-                )
-
-        sanitized = sanitize_cypher_query(query, max_hops=4, default_limit=25)
-        graph = db_client.get_graph(graph_name)
-        subgraph = Subgraph()
-
-        try:
-            res = graph.query(sanitized)
-            rows = res.result_set
-            headers = [h[1] if isinstance(h, (tuple, list)) and len(h) > 1 else str(h) for h in res.header] if hasattr(res, "header") and res.header else []
-
-            # 1. Synthesize concise executive user-friendly answer
-            friendly_answer = ""
-            if rows:
-                if self.is_available() and user_prompt:
-                    try:
-                        client = self.groq_client or self.openai_client
-                        dict_rows = [
-                            {str(headers[i] if i < len(headers) else f"col_{i}"): val for i, val in enumerate(row)}
-                            for row in rows[:10]
-                        ]
-                        synth_prompt = (
-                            f"User Question: '{user_prompt}'\n"
-                            f"Database Records: {json.dumps(dict_rows, default=str)}\n\n"
-                            f"Provide a direct, natural, executive 1-sentence answer to the user's question based on these records. "
-                            f"MANDATORY REQUIREMENT: Always explicitly specify the person's company affiliation (from company_origin, e.g. 'of Vaultly company' or 'of FinPay company') along with their role, team, and department.\n"
-                            f"Example format: \"Diya Nair is a Senior Backend Developer on the Vaultly Growth & Identity team within the Identity & Growth department of Vaultly company.\"\n"
-                            f"Do NOT mention 'database', 'Cypher', 'query', 'returned', or 'rows'."
-                        )
-                        synth_res = client.chat.completions.create(
-                            model=self.model,
-                            messages=[
-                                {
-                                    "role": "system",
-                                    "content": "You are OrgBridge AI, an executive assistant synthesizing concise, natural answers from verified enterprise graph data.",
-                                },
-                                {"role": "user", "content": synth_prompt},
-                            ],
-                            temperature=0.1,
-                            max_tokens=150,
-                        )
-                        friendly_answer = (synth_res.choices[0].message.content or "").strip()
-                    except Exception as synth_err:
-                        logger.debug("Failed to synthesize friendly Cypher answer with LLM: %s", synth_err)
-
-                if not friendly_answer:
-                    first_row = rows[0]
-                    if headers and len(first_row) == len(headers):
-                        row_map = {str(h): first_row[idx] for idx, h in enumerate(headers)}
-                        company = (
-                            row_map.get("p.company_origin")
-                            or row_map.get("s.company_origin")
-                            or row_map.get("pol.company_origin")
-                            or row_map.get("t.company_origin")
-                            or row_map.get("company_origin")
-                            or row_map.get("p.company")
-                            or row_map.get("company")
-                            or ""
-                        )
-
-                        # 1. System entity dispatch
-                        if (
-                            any(k.startswith("s.") for k in row_map)
-                            or "s.name" in row_map
-                            or ("system" in user_prompt.lower() and not any(k.startswith("p.") for k in row_map))
-                        ):
-                            sys_name = row_map.get("s.name") or row_map.get("name") or "The requested system"
-                            tech = row_map.get("s.tech") or row_map.get("tech") or ""
-                            domain = row_map.get("s.domain") or row_map.get("domain") or ""
-                            tier = row_map.get("s.tier") or row_map.get("tier") or ""
-                            parts = [f"**{sys_name}** is a"]
-                            if tier:
-                                parts.append(str(tier))
-                            if domain:
-                                parts.append(f"{domain}")
-                            parts.append("system")
-                            if tech:
-                                parts.append(f"built with {tech}")
-                            if company:
-                                parts.append(f"at {company} company")
-                            friendly_answer = " ".join(parts) + f". (Found {len(rows)} matching record{'s' if len(rows) != 1 else ''})."
-
-                        # 2. Policy entity dispatch
-                        elif (
-                            any(k.startswith("pol.") for k in row_map)
-                            or "pol.name" in row_map
-                            or "policy" in user_prompt.lower()
-                        ):
-                            pol_name = row_map.get("pol.name") or row_map.get("name") or "The policy"
-                            domain = row_map.get("pol.domain") or row_map.get("domain") or ""
-                            sev = row_map.get("pol.severity") or row_map.get("severity") or ""
-                            auth = row_map.get("pol.authority") or row_map.get("authority") or ""
-                            parts = [f"**{pol_name}** is a"]
-                            if sev:
-                                parts.append(f"{sev}-severity")
-                            if domain:
-                                parts.append(f"{domain}")
-                            parts.append("governance policy")
-                            if auth:
-                                parts.append(f"enforced by {auth}")
-                            if company:
-                                parts.append(f"of {company} company")
-                            friendly_answer = " ".join(parts) + f". (Found {len(rows)} matching record{'s' if len(rows) != 1 else ''})."
-
-                        # 3. Team entity dispatch
-                        elif any(k.startswith("t.") for k in row_map) and not any(k.startswith("p.") for k in row_map):
-                            team_name = row_map.get("t.name") or row_map.get("name") or "The requested team"
-                            dept = row_map.get("t.department") or row_map.get("department") or ""
-                            parts = [f"**{team_name}** is an engineering team"]
-                            if dept:
-                                parts.append(f"in the {dept} department")
-                            if company:
-                                parts.append(f"of {company} company")
-                            friendly_answer = " ".join(parts) + f". (Found {len(rows)} matching record{'s' if len(rows) != 1 else ''})."
-
-                        # 4. Person entity default
-                        else:
-                            name = row_map.get("p.name") or row_map.get("name") or "The requested person"
-                            role = row_map.get("p.role") or row_map.get("role") or ""
-                            dept = row_map.get("p.department") or row_map.get("department") or ""
-                            team = row_map.get("t.name") or row_map.get("team") or ""
-
-                            parts = [name]
-                            if role:
-                                parts.append(f"is a {role}")
-                            if team:
-                                parts.append(f"on the {team} team")
-                            if dept:
-                                parts.append(f"within the {dept} department")
-                            if company:
-                                parts.append(f"of {company} company")
-
-                            if len(parts) > 1:
-                                friendly_answer = " ".join(parts) + "."
-                            else:
-                                friendly_answer = f"Found {len(rows)} record(s) matching your request."
-                    else:
-                        friendly_answer = f"Found {len(rows)} record(s) matching your request."
-            else:
-                friendly_answer = f"No matching records found in the organization graph for '{user_prompt or explanation}'."
-
-            # 2. Format technical details under collapsible Thinking dropdown
-            thinking_lines = [
-                "<details class=\"thinking-dropdown\">",
-                "<summary>Thinking & Query Execution</summary>\n",
-                f"**Cypher**: `{sanitized}`\n",
-                f"**Purpose**: *{explanation}*\n",
-                f"**Returned**: {len(rows)} record(s)\n",
-            ]
-
-            if rows:
-                if headers:
-                    header_line = "| " + " | ".join(str(h) for h in headers) + " |"
-                    sep_line = "| " + " | ".join("---" for _ in headers) + " |"
-                    thinking_lines.extend([header_line, sep_line])
-                    for row in rows[:15]:
-                        thinking_lines.append("| " + " | ".join(str(val) for val in row) + " |")
-                else:
-                    for row in rows[:15]:
-                        thinking_lines.append(f"- {row}")
-            else:
-                thinking_lines.append("*Query returned 0 matching records in the graph.*")
-
-            thinking_lines.append("</details>")
-
-            full_text = f"{friendly_answer}\n\n" + "\n".join(thinking_lines)
-
-            return ToolResult(
-                tool_name="schema_constrained_cypher",
-                text_answer=full_text,
-                details={"query": sanitized, "row_count": len(rows), "summary": friendly_answer},
-                subgraph=subgraph,
-            )
-        except Exception as e:
-            logger.error(f"Error executing schema-constrained Cypher query: {e}")
+        """Executes a schema-constrained, sanitized Cypher query and formats the result with execution safeguards."""
+        # 1. Enforce strict read-only grammar and clause validation (B9)
+        validation = validate_readonly_cypher(query, max_hops=4, max_limit=50, default_limit=25)
+        if not validation["valid"]:
             return ToolResult(
                 tool_name="schema_constrained_cypher",
                 status="error",
-                text_answer=f"**Cypher Execution Error**: {e}\nQuery attempted: `{sanitized}`",
+                text_answer=f"**Security Violation**: {validation['message']}",
+                details={"error_code": validation.get("error_code")},
+                subgraph=Subgraph(),
+            )
+
+        sanitized = validation["sanitized_query"]
+        graph = db_client.get_graph(graph_name)
+        subgraph = Subgraph()
+
+        # 2. Server-side execution safeguard with timeout
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(graph.query, sanitized)
+                res = future.result(timeout=timeout_seconds)
+            rows = res.result_set
+            headers = [h[1] if isinstance(h, (tuple, list)) and len(h) > 1 else str(h) for h in res.header] if hasattr(res, "header") and res.header else []
+        except concurrent.futures.TimeoutError:
+            logger.error(f"[{graph_name}] Cypher query exceeded timeout ({timeout_seconds}s): {sanitized}")
+            return ToolResult(
+                tool_name="schema_constrained_cypher",
+                status="error",
+                text_answer=f"**Execution Safeguard**: Query execution timed out after {timeout_seconds} seconds.",
+                details={"error_code": "QUERY_TIMEOUT", "query": sanitized},
                 subgraph=subgraph,
             )
+        except Exception as e:
+            logger.error(f"[{graph_name}] Cypher query execution error: {e}")
+            return ToolResult(
+                tool_name="schema_constrained_cypher",
+                status="error",
+                text_answer=f"**Query Execution Error**: {str(e)}",
+                details={"query": sanitized},
+                subgraph=subgraph,
+            )
+
+        # 1. Synthesize concise executive user-friendly answer
+        friendly_answer = ""
+        if rows:
+            if self.is_available() and user_prompt:
+                try:
+                    client = self.groq_client or self.openai_client
+                    dict_rows = [
+                        {str(headers[i] if i < len(headers) else f"col_{i}"): val for i, val in enumerate(row)}
+                        for row in rows[:10]
+                    ]
+                    synth_prompt = (
+                        f"User Question: '{user_prompt}'\n"
+                        f"Database Records: {json.dumps(dict_rows, default=str)}\n\n"
+                        f"Provide a direct, natural, executive 1-sentence answer to the user's question based on these records. "
+                        f"MANDATORY REQUIREMENT: Always explicitly specify the person's company affiliation (from company_origin, e.g. 'of Vaultly company' or 'of FinPay company') along with their role, team, and department.\n"
+                        f"Example format: \"Diya Nair is a Senior Backend Developer on the Vaultly Growth & Identity team within the Identity & Growth department of Vaultly company.\"\n"
+                        f"Do NOT mention 'database', 'Cypher', 'query', 'returned', or 'rows'."
+                    )
+                    synth_res = client.chat.completions.create(
+                        model=self.model,
+                        messages=[
+                            {
+                                "role": "system",
+                                "content": "You are OrgBridge AI, an executive assistant synthesizing concise, natural answers from verified enterprise graph data.",
+                            },
+                            {"role": "user", "content": synth_prompt},
+                        ],
+                        temperature=0.1,
+                        max_tokens=150,
+                    )
+                    friendly_answer = (synth_res.choices[0].message.content or "").strip()
+                except Exception as synth_err:
+                    logger.debug("Failed to synthesize friendly Cypher answer with LLM: %s", synth_err)
+
+            if not friendly_answer:
+                first_row = rows[0]
+                if headers and len(first_row) == len(headers):
+                    row_map = {str(h): first_row[idx] for idx, h in enumerate(headers)}
+                    company = (
+                        row_map.get("p.company_origin")
+                        or row_map.get("s.company_origin")
+                        or row_map.get("pol.company_origin")
+                        or row_map.get("t.company_origin")
+                        or row_map.get("company_origin")
+                        or row_map.get("p.company")
+                        or row_map.get("company")
+                        or ""
+                    )
+
+                    # 1. System entity dispatch
+                    if (
+                        any(k.startswith("s.") for k in row_map)
+                        or "s.name" in row_map
+                        or ("system" in user_prompt.lower() and not any(k.startswith("p.") for k in row_map))
+                    ):
+                        sys_name = row_map.get("s.name") or row_map.get("name") or "The requested system"
+                        tech = row_map.get("s.tech") or row_map.get("tech") or ""
+                        domain = row_map.get("s.domain") or row_map.get("domain") or ""
+                        tier = row_map.get("s.tier") or row_map.get("tier") or ""
+                        parts = [f"**{sys_name}** is a"]
+                        if tier:
+                            parts.append(str(tier))
+                        if domain:
+                            parts.append(f"{domain}")
+                        parts.append("system")
+                        if tech:
+                            parts.append(f"built with {tech}")
+                        if company:
+                            parts.append(f"at {company} company")
+                        friendly_answer = " ".join(parts) + f". (Found {len(rows)} matching record{'s' if len(rows) != 1 else ''})."
+
+                    # 2. Policy entity dispatch
+                    elif (
+                        any(k.startswith("pol.") for k in row_map)
+                        or "pol.name" in row_map
+                        or "policy" in user_prompt.lower()
+                    ):
+                        pol_name = row_map.get("pol.name") or row_map.get("name") or "The policy"
+                        domain = row_map.get("pol.domain") or row_map.get("domain") or ""
+                        sev = row_map.get("pol.severity") or row_map.get("severity") or ""
+                        auth = row_map.get("pol.authority") or row_map.get("authority") or ""
+                        parts = [f"**{pol_name}** is a"]
+                        if sev:
+                            parts.append(f"{sev}-severity")
+                        if domain:
+                            parts.append(f"{domain}")
+                        parts.append("governance policy")
+                        if auth:
+                            parts.append(f"enforced by {auth}")
+                        if company:
+                            parts.append(f"of {company} company")
+                        friendly_answer = " ".join(parts) + f". (Found {len(rows)} matching record{'s' if len(rows) != 1 else ''})."
+
+                    # 3. Team entity dispatch
+                    elif any(k.startswith("t.") for k in row_map) and not any(k.startswith("p.") for k in row_map):
+                        team_name = row_map.get("t.name") or row_map.get("name") or "The requested team"
+                        dept = row_map.get("t.department") or row_map.get("department") or ""
+                        parts = [f"**{team_name}** is an engineering team"]
+                        if dept:
+                            parts.append(f"in the {dept} department")
+                        if company:
+                            parts.append(f"of {company} company")
+                        friendly_answer = " ".join(parts) + f". (Found {len(rows)} matching record{'s' if len(rows) != 1 else ''})."
+
+                    # 4. Person entity default
+                    else:
+                        name = row_map.get("p.name") or row_map.get("name") or "The requested person"
+                        role = row_map.get("p.role") or row_map.get("role") or ""
+                        dept = row_map.get("p.department") or row_map.get("department") or ""
+                        team = row_map.get("t.name") or row_map.get("team") or ""
+
+                        parts = [name]
+                        if role:
+                            parts.append(f"is a {role}")
+                        if team:
+                            parts.append(f"on the {team} team")
+                        if dept:
+                            parts.append(f"within the {dept} department")
+                        if company:
+                            parts.append(f"of {company} company")
+
+                        if len(parts) > 1:
+                            friendly_answer = " ".join(parts) + "."
+                        else:
+                            friendly_answer = f"Found {len(rows)} record(s) matching your request."
+                else:
+                    friendly_answer = f"Found {len(rows)} record(s) matching your request."
+        else:
+            friendly_answer = f"No matching records found in the organization graph for '{user_prompt or explanation}'."
+
+        # 2. Format technical details under collapsible Thinking dropdown
+        thinking_lines = [
+            "<details class=\"thinking-dropdown\">",
+            "<summary>Thinking & Query Execution</summary>\n",
+            f"**Cypher**: `{sanitized}`\n",
+            f"**Purpose**: *{explanation}*\n",
+            f"**Returned**: {len(rows)} record(s)\n",
+        ]
+
+        if rows:
+            if headers:
+                header_line = "| " + " | ".join(str(h) for h in headers) + " |"
+                sep_line = "| " + " | ".join("---" for _ in headers) + " |"
+                thinking_lines.extend([header_line, sep_line])
+                for row in rows[:15]:
+                    thinking_lines.append("| " + " | ".join(str(val) for val in row) + " |")
+            else:
+                for row in rows[:15]:
+                    thinking_lines.append(f"- {row}")
+        else:
+            thinking_lines.append("*Query returned 0 matching records in the graph.*")
+
+        thinking_lines.append("</details>")
+
+        full_text = f"{friendly_answer}\n\n" + "\n".join(thinking_lines)
+
+        return ToolResult(
+            tool_name="schema_constrained_cypher",
+            text_answer=full_text,
+            details={"query": sanitized, "row_count": len(rows), "summary": friendly_answer},
+            subgraph=subgraph,
+        )
 
     def _fallback_deterministic_dispatch(self, user_prompt: str, graph_name: str) -> ToolResult:
         """Offline deterministic intent router when no LLM API key is present."""

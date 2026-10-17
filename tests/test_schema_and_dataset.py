@@ -15,6 +15,8 @@ from src.schema.cypher_schema import (
     ALLOWED_RELATIONSHIPS,
     INDEX_QUERIES,
     sanitize_cypher_query,
+    validate_readonly_cypher,
+    CYPHER_TEMPLATES,
     build_node_merge_cypher,
     build_relationship_merge_cypher,
 )
@@ -184,3 +186,51 @@ def test_cypher_scripts_generation():
     assert len(scripts["finpay_graph"]) > 50
     assert len(scripts["vaultly_graph"]) > 50
     assert len(scripts["merged_brain"]) > 100
+
+
+def test_validate_readonly_cypher_security_boundary():
+    """Verifies that validate_readonly_cypher strictly rejects mutations, enforces read clauses, and bounds queries (B9)."""
+    # 1. Prohibited mutating operations
+    for bad_kw in ["CREATE (n:Person)", "MERGE (s:System)", "DELETE p", "DETACH DELETE n", "SET p.role = 'Admin'", "REMOVE p.tag"]:
+        res = validate_readonly_cypher(f"MATCH (p:Person) {bad_kw} RETURN p")
+        assert res["valid"] is False
+        assert res["error_code"] == "MUTATING_OPERATION_PROHIBITED"
+
+    # 2. Administrative procedures rejected
+    bad_call = validate_readonly_cypher("CALL dbms.security.createUser('hacker', 'pass') RETURN 1")
+    assert bad_call["valid"] is False
+    assert bad_call["error_code"] in ("DISALLOWED_PROCEDURE", "INVALID_ENTRY_CLAUSE")
+
+    # 3. Disallowed entry clause
+    bad_start = validate_readonly_cypher("DROP INDEX ON :Person(id) RETURN 1")
+    assert bad_start["valid"] is False
+
+    # 4. Missing RETURN clause
+    missing_ret = validate_readonly_cypher("MATCH (p:Person) WHERE p.name = 'Aarav'")
+    assert missing_ret["valid"] is False
+    assert missing_ret["error_code"] == "MISSING_RETURN_CLAUSE"
+
+    # 5. Mutating keyword allowed inside data string literals without false positive
+    safe_data = validate_readonly_cypher("MATCH (p:Policy) WHERE p.name = 'CREATE_NEW_ACCORD' RETURN p.name")
+    assert safe_data["valid"] is True
+    assert "LIMIT 25" in safe_data["sanitized_query"]
+
+    # 6. LIMIT ceiling enforcement (max_limit = 50)
+    huge_limit = validate_readonly_cypher("MATCH (p:Person) RETURN p.name LIMIT 9999", max_limit=50)
+    assert huge_limit["valid"] is True
+    assert "LIMIT 50" in huge_limit["sanitized_query"]
+
+
+def test_parameterized_cypher_templates():
+    """Verifies predefined query templates catalog and execution structure (B9)."""
+    assert "systems_by_domain" in CYPHER_TEMPLATES
+    assert "policies_by_domain" in CYPHER_TEMPLATES
+    assert "person_by_role" in CYPHER_TEMPLATES
+    assert "team_members" in CYPHER_TEMPLATES
+    assert "system_by_name" in CYPHER_TEMPLATES
+
+    tmpl = CYPHER_TEMPLATES["systems_by_domain"]
+    assert "$domain" in tmpl["template"]
+    assert "$limit" in tmpl["template"]
+    assert "RETURN" in tmpl["template"]
+

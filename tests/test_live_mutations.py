@@ -26,6 +26,8 @@ def test_resolve_auth_conflict(mutation_engine):
     assert res["action"] == "resolve_auth_conflict"
     assert "unified_policy_id" in res
     assert res["unified_policy_id"] == "unified:pol:hybrid_session_auth"
+    assert "post_verification" in res
+    assert res["post_verification"]["verified"] is True
     assert "subgraph" in res
     assert len(res["subgraph"]["nodes"]) >= 3
     assert len(res["subgraph"]["edges"]) >= 2
@@ -53,6 +55,8 @@ def test_resolve_retention_conflict(mutation_engine):
     assert res["status"] == "success"
     assert res["action"] == "resolve_retention_conflict"
     assert res["unified_policy_id"] == "unified:pol:tiered_retention_90d"
+    assert "post_verification" in res
+    assert res["post_verification"]["verified"] is True
     assert "subgraph" in res
     assert len(res["subgraph"]["nodes"]) >= 3
 
@@ -118,6 +122,9 @@ def test_reset_demo(mutation_engine):
     res = mutation_engine.reset_demo(include_subgraph=True)
     assert res["status"] == "success"
     assert res["action"] == "reset_demo"
+    assert "stages" in res
+    assert res["stages"]["seeding"]["status"] == "success"
+    assert res["stages"]["verification"]["node_count"] > 0
     assert "subgraph" in res
     assert len(res["subgraph"]["nodes"]) > 0
     assert len(res["subgraph"]["edges"]) > 0
@@ -259,4 +266,48 @@ def test_policy_contradiction_validation_engine():
         assert "review_status" in first
         assert "authority_assessment" in first
         assert "Contradiction Type" in res.text_answer
+
+
+def test_mutation_post_verification_and_invariants(mutation_engine):
+    """Verifies B10: Post-mutation invariant checks prove node/relationship states before reporting success."""
+    # Test auth conflict resolution post-verification fields
+    res_auth = mutation_engine.resolve_auth_conflict(compromise_ttl_minutes=25)
+    assert res_auth["status"] == "success"
+    assert res_auth["post_verification"]["verified"] is True
+    assert res_auth["post_verification"]["policy_status"] == "ACTIVE"
+    assert res_auth["post_verification"]["decision_status"] == "ACTIVE"
+
+    # Test retention conflict resolution post-verification fields
+    res_ret = mutation_engine.resolve_retention_conflict(retention_days=60)
+    assert res_ret["status"] == "success"
+    assert res_ret["post_verification"]["verified"] is True
+    assert res_ret["post_verification"]["policy_status"] == "ACTIVE"
+    assert res_ret["post_verification"]["decision_status"] == "ACTIVE"
+
+
+def test_reset_demo_multi_stage_verification_and_failure(mutation_engine, monkeypatch):
+    """Verifies B10: Multi-stage tracking in reset_demo and failure propagation when seeding fails."""
+    # 1. Normal run has multi-stage reporting
+    res = mutation_engine.reset_demo(include_subgraph=False)
+    assert res["status"] == "success"
+    assert "stages" in res
+    assert "seeding" in res["stages"]
+    assert "auto_linker" in res["stages"]
+    assert "verification" in res["stages"]
+    assert res["stages"]["seeding"]["status"] == "success"
+    assert res["stages"]["verification"]["node_count"] > 0
+
+    # 2. Simulated seeding failure raises RuntimeError
+    from src.data import seed
+    def mock_failed_seed_all(*args, **kwargs):
+        return {
+            "status": "failed",
+            "total_failures": 3,
+            "failed_details": [{"statement": "CREATE (...) ", "error": "Redis connection dropped"}],
+        }
+
+    monkeypatch.setattr(seed, "seed_all_graphs", mock_failed_seed_all)
+    with pytest.raises(RuntimeError, match="Reset failed during graph seeding stage: 3 statement"):
+        mutation_engine.reset_demo(include_subgraph=False)
+
 
