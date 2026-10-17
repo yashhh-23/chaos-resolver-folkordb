@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Brain } from "lucide-react";
 import ChatPanel from "@/components/ChatPanel";
 import GraphCanvas from "@/components/GraphCanvas";
@@ -21,6 +21,11 @@ export default function WarRoomDashboard() {
   ]);
   const [selectedGraph, setSelectedGraph] = useState<string>("merged_brain");
   const [isFallbackMode, setIsFallbackMode] = useState<boolean>(false);
+  const [isStale, setIsStale] = useState<boolean>(false);
+  const [isTenantEmpty, setIsTenantEmpty] = useState<boolean>(false);
+
+  // Cache last known successful graph per tenant to prevent blanking on temporary backend interruptions (F5)
+  const lastGoodGraphRef = useRef<Record<string, SubgraphData>>({});
 
   // Draggable splitter & graph maximize state
   const [chatWidth, setChatWidth] = useState<number>(480);
@@ -72,15 +77,37 @@ export default function WarRoomDashboard() {
         const data = await fetchFullSubgraph(selectedGraph);
         if (data && data.nodes && data.nodes.length > 0) {
           setGraphData(data);
+          lastGoodGraphRef.current[selectedGraph] = data;
+          setIsFallbackMode(false);
+          setIsStale(false);
+          setIsTenantEmpty(false);
+        } else if (data && data.nodes && data.nodes.length === 0) {
+          // Legitimate empty graph tenant returned by FalkorDB
+          setGraphData(data);
+          setIsFallbackMode(false);
+          setIsStale(false);
+          setIsTenantEmpty(true);
+        } else {
+          // Temporary interruption: preserve last known good graph if available
+          if (lastGoodGraphRef.current[selectedGraph]) {
+            setGraphData(lastGoodGraphRef.current[selectedGraph]);
+            setIsStale(true);
+            setIsFallbackMode(false);
+          } else {
+            setGraphData(getFallbackGraph(selectedGraph));
+            setIsFallbackMode(true);
+          }
+        }
+      } catch (err) {
+        console.info("Live backend connection pending or interrupted:", err);
+        if (lastGoodGraphRef.current[selectedGraph]) {
+          setGraphData(lastGoodGraphRef.current[selectedGraph]);
+          setIsStale(true);
           setIsFallbackMode(false);
         } else {
           setGraphData(getFallbackGraph(selectedGraph));
           setIsFallbackMode(true);
         }
-      } catch (err) {
-        console.info("Live backend connection pending, activating curated offline demo preview:", err);
-        setGraphData(getFallbackGraph(selectedGraph));
-        setIsFallbackMode(true);
       } finally {
         setIsLoading(false);
       }
@@ -90,7 +117,7 @@ export default function WarRoomDashboard() {
 
   // Periodic background health check & live graph recovery when backend is waking up from cold start
   useEffect(() => {
-    if (isHealthy) return;
+    if (isHealthy && !isStale) return;
 
     const interval = setInterval(async () => {
       try {
@@ -104,7 +131,10 @@ export default function WarRoomDashboard() {
           const data = await fetchFullSubgraph(selectedGraph);
           if (data && data.nodes && data.nodes.length > 0) {
             setGraphData(data);
+            lastGoodGraphRef.current[selectedGraph] = data;
             setIsFallbackMode(false);
+            setIsStale(false);
+            setIsTenantEmpty(false);
           }
         }
       } catch {
@@ -113,7 +143,7 @@ export default function WarRoomDashboard() {
     }, 4000);
 
     return () => clearInterval(interval);
-  }, [isHealthy, selectedGraph]);
+  }, [isHealthy, isStale, selectedGraph]);
 
   const handleSubgraphUpdate = (subgraph: SubgraphData | null) => {
     setActiveSubgraph(subgraph);
@@ -126,19 +156,39 @@ export default function WarRoomDashboard() {
   const handleFullGraphRefresh = async (freshData?: SubgraphData): Promise<void> => {
     if (freshData && freshData.nodes && freshData.nodes.length > 0 && selectedGraph === "merged_brain") {
       setGraphData(freshData);
+      lastGoodGraphRef.current[selectedGraph] = freshData;
       setIsHealthy(true);
+      setIsStale(false);
+      setIsTenantEmpty(false);
+      setIsFallbackMode(false);
     } else {
       try {
         const d = await fetchFullSubgraph(selectedGraph);
         if (d && d.nodes && d.nodes.length > 0) {
           setGraphData(d);
+          lastGoodGraphRef.current[selectedGraph] = d;
           setIsHealthy(true);
-        } else {
-          setGraphData(getFallbackGraph(selectedGraph));
+          setIsStale(false);
+          setIsTenantEmpty(false);
+          setIsFallbackMode(false);
+        } else if (d && d.nodes && d.nodes.length === 0) {
+          setGraphData(d);
+          setIsTenantEmpty(true);
+          setIsStale(false);
+          setIsFallbackMode(false);
+        } else if (lastGoodGraphRef.current[selectedGraph]) {
+          setGraphData(lastGoodGraphRef.current[selectedGraph]);
+          setIsStale(true);
         }
       } catch (err) {
-        console.warn("Could not refresh full graph, activating tenant fallback:", err);
-        setGraphData(getFallbackGraph(selectedGraph));
+        console.warn("Could not refresh full graph, retaining last usable graph (F5):", err);
+        setIsStale(true);
+        if (lastGoodGraphRef.current[selectedGraph]) {
+          setGraphData(lastGoodGraphRef.current[selectedGraph]);
+        } else if (!graphData.nodes || graphData.nodes.length === 0) {
+          setGraphData(getFallbackGraph(selectedGraph));
+          setIsFallbackMode(true);
+        }
       }
     }
   };
@@ -219,14 +269,30 @@ export default function WarRoomDashboard() {
 
           <div className="h-4 w-[1px] bg-slate-700/80 mx-0.5 hidden sm:block" />
 
-          {/* Explicit Connection / Preview Mode Status Badge (F1) */}
-          {isFallbackMode ? (
+          {/* Explicit Connection / Stale / Preview Mode Status Badge (F1 & F5) */}
+          {isStale ? (
+            <span
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-500/10 border border-amber-500/40 text-amber-400 font-medium text-[11px] whitespace-nowrap shadow-sm"
+              title="Temporary backend interruption during refresh - retaining last valid graph snapshot"
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+              <span>Stale Snapshot (Retaining Last Graph)</span>
+            </span>
+          ) : isFallbackMode ? (
             <span
               className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-400 font-medium text-[11px] whitespace-nowrap"
               title="Displaying curated offline demo preview with cross-company bridges while backend instance initializes"
             >
               <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping" />
               <span>Offline Demo Preview (Connecting to FalkorDB...)</span>
+            </span>
+          ) : isTenantEmpty ? (
+            <span
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-800/80 border border-slate-700 text-slate-400 font-medium text-[11px] whitespace-nowrap"
+              title="Selected graph tenant has 0 nodes seeded in FalkorDB"
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-slate-500" />
+              <span>Empty Graph Tenant (0 Nodes)</span>
             </span>
           ) : (
             <span

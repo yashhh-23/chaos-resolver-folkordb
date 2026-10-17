@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   Send,
   Sparkles,
@@ -16,6 +16,9 @@ import {
   Zap,
   RotateCcw,
   CheckCircle2,
+  Copy,
+  Check,
+  Trash2,
 } from "lucide-react";
 import { SubgraphData, ToolResponse, callTool, mutateGraph, chatWithAgent } from "@/lib/api";
 
@@ -412,6 +415,9 @@ const CRISIS_PROMPTS = [
 ];
 
 
+const MAX_MESSAGES = 40;
+const SESSION_STORAGE_KEY = "orgbridge_chat_session_history";
+
 export default function ChatPanel({
   selectedGraph = "merged_brain",
   onSubgraphUpdate,
@@ -429,6 +435,84 @@ export default function ChatPanel({
   ]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  // Load chat session from sessionStorage on mount (F6)
+  useEffect(() => {
+    try {
+      const stored = sessionStorage.getItem(SESSION_STORAGE_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setMessages(parsed);
+        }
+      }
+    } catch (err) {
+      console.warn("Could not load stored session history:", err);
+    }
+  }, []);
+
+  // Persist compact chat session transcript on update (F6)
+  useEffect(() => {
+    if (messages.length > 0) {
+      try {
+        const compact = messages.slice(-MAX_MESSAGES).map((m) => ({
+          id: m.id,
+          sender: m.sender,
+          text: m.text,
+          toolName: m.toolName,
+          timestamp: m.timestamp,
+          subgraph: m.subgraph
+            ? {
+                nodes: m.subgraph.nodes?.slice(0, 30),
+                edges: m.subgraph.edges?.slice(0, 50),
+              }
+            : undefined,
+        }));
+        sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(compact));
+      } catch (err) {
+        console.warn("Could not persist session history:", err);
+      }
+    }
+  }, [messages]);
+
+  // Memory management: limit retained chat history to prevent memory/DOM bloat (F6)
+  const appendMessage = (newMsg: Message) => {
+    setMessages((prev) => {
+      const updated = [...prev, newMsg];
+      if (updated.length > MAX_MESSAGES) {
+        return [updated[0], ...updated.slice(-(MAX_MESSAGES - 1))];
+      }
+      return updated;
+    });
+  };
+
+  const handleExportTranscript = () => {
+    const transcript = messages
+      .map(
+        (m) =>
+          `[${m.timestamp}] ${m.sender === "user" ? "USER" : `AGENT (${m.toolName || "Chat"})`}:\n${m.text}\n`
+      )
+      .join("\n---\n\n");
+    navigator.clipboard.writeText(transcript);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleClearSession = () => {
+    try {
+      sessionStorage.removeItem(SESSION_STORAGE_KEY);
+    } catch {}
+    setMessages([
+      {
+        id: "welcome",
+        sender: "agent",
+        text: "### Welcome to OrgBridge AI (The M&A Chaos Resolver)\n\nI am connected to your live **FalkorDB Multi-Tenant Brain** (`finpay_graph`, `vaultly_graph`, and `merged_brain`).\n\nClick any of the **M&A Crisis Prompts** below or ask any question to resolve organizational silos, uncover hidden dependencies, and detect conflicting architectural decisions.",
+        timestamp: "Just now",
+      },
+    ]);
+    onSubgraphUpdate(null);
+  };
 
   const handleRunCrisisPrompt = async (crisis: typeof CRISIS_PROMPTS[0]) => {
     if (isLoading) return;
@@ -440,7 +524,7 @@ export default function ChatPanel({
       timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
     };
 
-    setMessages((prev) => [...prev, userMsg]);
+    appendMessage(userMsg);
     setIsLoading(true);
 
     try {
@@ -454,21 +538,18 @@ export default function ChatPanel({
         subgraph: res.subgraph,
         timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       };
-      setMessages((prev) => [...prev, agentMsg]);
+      appendMessage(agentMsg);
       if (res.subgraph) {
         onSubgraphUpdate(res.subgraph);
       }
     } catch (err: any) {
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: (Date.now() + 1).toString(),
-          sender: "agent",
-          toolName: "error",
-          text: `**Query Error**: ${err.message || err}`,
-          timestamp: "Error",
-        },
-      ]);
+      appendMessage({
+        id: (Date.now() + 1).toString(),
+        sender: "agent",
+        toolName: "error",
+        text: `**Query Error**: ${err.message || err}`,
+        timestamp: "Error",
+      });
     } finally {
       setIsLoading(false);
     }
@@ -487,7 +568,7 @@ export default function ChatPanel({
       timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
     };
 
-    setMessages((prev) => [...prev, userMsg]);
+    appendMessage(userMsg);
     setIsLoading(true);
 
     try {
@@ -518,11 +599,10 @@ export default function ChatPanel({
         subgraph: res.subgraph,
         timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       };
-      setMessages((prev) => [...prev, agentMsg]);
+      appendMessage(agentMsg);
 
       // Re-fetch or update the full graph from FalkorDB so main canvas reflects mutations
       if (action === "reset-demo") {
-        // If viewing merged_brain, pass res.subgraph directly; if isolated tenant, re-fetch that tenant's baseline
         if (selectedGraph === "merged_brain" && res.subgraph) {
           if (onFullGraphRefresh) {
             await onFullGraphRefresh(res.subgraph);
@@ -532,8 +612,6 @@ export default function ChatPanel({
         }
         onSubgraphUpdate(null);
       } else {
-        // Await full graph refresh first so graphData contains the newly created unified:* nodes
-        // before onSubgraphUpdate triggers active subgraph isolation and inspector selection.
         if (onFullGraphRefresh) {
           await onFullGraphRefresh();
         }
@@ -542,16 +620,13 @@ export default function ChatPanel({
         }
       }
     } catch (err: any) {
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: (Date.now() + 1).toString(),
-          sender: "agent",
-          toolName: "error",
-          text: `**Mutation Error**: ${err.message || err}`,
-          timestamp: "Error",
-        },
-      ]);
+      appendMessage({
+        id: (Date.now() + 1).toString(),
+        sender: "agent",
+        toolName: "error",
+        text: `**Mutation Error**: ${err.message || err}`,
+        timestamp: "Error",
+      });
     } finally {
       setIsLoading(false);
     }
@@ -571,38 +646,32 @@ export default function ChatPanel({
       timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
     };
 
-    setMessages((prev) => [...prev, userMsg]);
+    appendMessage(userMsg);
     setIsLoading(true);
 
     try {
       const res: ToolResponse = await chatWithAgent(userText, selectedGraph);
       onBackendHealthy?.();
 
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: (Date.now() + 1).toString(),
-          sender: "agent",
-          text: res.text_answer,
-          toolName: res.tool_name,
-          subgraph: res.subgraph,
-          timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-        },
-      ]);
+      appendMessage({
+        id: (Date.now() + 1).toString(),
+        sender: "agent",
+        text: res.text_answer,
+        toolName: res.tool_name,
+        subgraph: res.subgraph,
+        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      });
       if (res.subgraph && res.subgraph.nodes?.length > 0) {
         onSubgraphUpdate(res.subgraph);
       }
     } catch (err: any) {
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: (Date.now() + 1).toString(),
-          sender: "agent",
-          toolName: "error",
-          text: `**Query Error**: ${err.message || err}`,
-          timestamp: "Error",
-        },
-      ]);
+      appendMessage({
+        id: (Date.now() + 1).toString(),
+        sender: "agent",
+        toolName: "error",
+        text: `**Query Error**: ${err.message || err}`,
+        timestamp: "Error",
+      });
     } finally {
       setIsLoading(false);
     }
@@ -626,9 +695,25 @@ export default function ChatPanel({
           </p>
         </div>
 
-        {/* Database connectivity pill */}
-        <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1.5 text-xs bg-slate-950/80 px-2.5 py-1 rounded-full border border-slate-800">
+        {/* Header Actions: Transcript Export, Session Reset, & Database Status */}
+        <div className="flex items-center gap-1.5">
+          <button
+            onClick={handleExportTranscript}
+            className="p-1.5 rounded-lg bg-slate-950/80 hover:bg-slate-800 text-slate-400 hover:text-cyan-300 border border-slate-800 transition shadow-sm"
+            title="Copy Session Transcript to Clipboard (F6)"
+          >
+            {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+          </button>
+
+          <button
+            onClick={handleClearSession}
+            className="p-1.5 rounded-lg bg-slate-950/80 hover:bg-slate-800 text-slate-400 hover:text-amber-400 border border-slate-800 transition shadow-sm"
+            title="Reset Chat Session & Clear Stored History (F6)"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
+
+          <div className="flex items-center gap-1.5 text-xs bg-slate-950/80 px-2.5 py-1 rounded-full border border-slate-800 shadow-sm">
             <span
               className={`w-2 h-2 rounded-full ${
                 isBackendHealthy ? "bg-emerald-500 animate-pulse" : "bg-amber-500"
