@@ -5,8 +5,8 @@ Groq Llama-3.3-70B agent with schema-constrained Cypher,
 and live visual subgraph payloads for the Next.js War Room dashboard.
 """
 
-from typing import Optional, Dict, Any
-from fastapi import FastAPI, HTTPException, Body
+from typing import Optional, Dict, Any, List
+from fastapi import FastAPI, HTTPException, Body, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -16,25 +16,45 @@ from src.db.client import db_client
 from src.tools.graph_tools import agent_tools, GraphAgentTools, ToolResult, Subgraph, fetch_visualization_subgraph
 from src.tools.mcp_server import MCP_TOOL_DEFINITIONS, execute_tool
 from src.tools.llm_agent import llm_agent
+from src.pipeline.mutations import get_mutation_engine
+from src.api.auth import require_read, require_write, require_admin
+
+VALID_GRAPHS = {settings.graph_finpay, settings.graph_vaultly, settings.graph_merged}
+
+
+def validate_graph(graph_name: Optional[str]) -> str:
+    """Validates the target multigraph tenant, defaulting to settings.graph_merged."""
+    if not graph_name:
+        return settings.graph_merged
+    if graph_name not in VALID_GRAPHS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid graph tenant '{graph_name}'. Valid tenants: {sorted(list(VALID_GRAPHS))}",
+        )
+    return graph_name
 
 
 def get_tools(graph_name: Optional[str] = None) -> GraphAgentTools:
     """Returns a GraphAgentTools instance bound to the requested tenant or default merged_brain."""
-    return GraphAgentTools(graph_name=graph_name) if graph_name else agent_tools
+    target = validate_graph(graph_name)
+    return GraphAgentTools(graph_name=target)
 
 
 app = FastAPI(
     title="OrgBridge AI API",
     description="FalkorDB Multi-Tenant M&A Brain & Graph Agent Tools",
-    version="0.3.0",
+    version="0.4.0",
 )
 
-# Enable CORS for Next.js frontend (local dev & production)
+# Restrict CORS to known frontend origins (local dev & verified production)
+_allowed_origins = [o.strip() for o in settings.cors_allowed_origins.split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origin_regex=r"https?://.*",
+    allow_origins=_allowed_origins,
+    allow_origin_regex=r"^https://.*\.vercel\.app$",
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -72,16 +92,23 @@ class SilosRequest(BaseModel):
 
 class ResolveAuthRequest(BaseModel):
     compromise_ttl_minutes: int = Field(default=30, description="Compromise JWT TTL in minutes", examples=[30])
+    graph: Optional[str] = Field(default=None, description="Target multigraph tenant to mutate", examples=["merged_brain"])
 
 
 class ResolveRetentionRequest(BaseModel):
     retention_days: int = Field(default=90, description="Audit retention period in days", examples=[90])
+    graph: Optional[str] = Field(default=None, description="Target multigraph tenant to mutate", examples=["merged_brain"])
 
 
 class MergeTeamsRequest(BaseModel):
     team_a_id: str = Field(default="finpay:team:secarch", description="First team to merge", examples=["finpay:team:secarch"])
     team_b_id: str = Field(default="vaultly:team:identity_growth", description="Second team to merge", examples=["vaultly:team:identity_growth"])
     unified_name: str = Field(default="Unified M&A Security & Identity Team", description="Unified joint team name", examples=["Unified M&A Security & Identity Team"])
+    graph: Optional[str] = Field(default=None, description="Target multigraph tenant to mutate", examples=["merged_brain"])
+
+
+class ResetDemoRequest(BaseModel):
+    graph: Optional[str] = Field(default=None, description="Optional target multigraph tenant to reseed and link", examples=["merged_brain"])
 
 
 class MCPExecuteRequest(BaseModel):
@@ -127,9 +154,9 @@ def get_mcp_tools():
     return {"tools": MCP_TOOL_DEFINITIONS}
 
 
-@app.post("/api/mcp/execute", response_model=ToolResult)
+@app.post("/api/mcp/execute", response_model=ToolResult, dependencies=[Depends(require_read)])
 def run_mcp_tool(req: MCPExecuteRequest):
-    """Executes an MCP tool dynamically."""
+    """Executes an MCP tool dynamically. Protected by read authentication."""
     try:
         return execute_tool(req.tool_name, req.arguments, graph_name=req.graph)
     except Exception as e:
@@ -203,11 +230,14 @@ def detect_organizational_silos(req: Optional[SilosRequest] = None):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/api/chat", response_model=ToolResult)
+@app.post("/api/chat", response_model=ToolResult, dependencies=[Depends(require_read)])
 def chat_with_agent(req: ChatRequest):
     """Conversational endpoint powered by Groq Llama-3.3-70B with schema-constrained Cypher and tool fallback."""
     try:
-        return llm_agent.chat(user_prompt=req.prompt, graph_name=req.graph)
+        target_graph = validate_graph(req.graph)
+        return llm_agent.chat(user_prompt=req.prompt, graph_name=target_graph)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error in chat endpoint: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -216,57 +246,70 @@ def chat_with_agent(req: ChatRequest):
 @app.get("/api/graph/subgraph", response_model=Subgraph)
 def get_graph_visualization(graph: Optional[str] = None):
     """Returns nodes and edges for visual rendering in Next.js react-force-graph-2d."""
-    return fetch_visualization_subgraph(graph or settings.graph_merged)
+    target_graph = validate_graph(graph)
+    return fetch_visualization_subgraph(target_graph)
 
 
 # Live Mutation Endpoints (Phase 5 - Track 03: Keeping Knowledge Current)
-@app.post("/api/mutate/resolve-auth-conflict")
+@app.post("/api/mutate/resolve-auth-conflict", dependencies=[Depends(require_write)])
 def resolve_auth_conflict(req: Optional[ResolveAuthRequest] = Body(default=None)):
-    """Live Mutation: Resolves 15-min vs 7-day token conflict by creating Unified Adaptive Policy."""
-    from src.pipeline.mutations import live_mutations
+    """Live Mutation: Resolves 15-min vs 7-day token conflict on the targeted graph tenant. Requires 'write' role."""
     try:
+        target_graph = validate_graph(req.graph if req else None)
+        engine = get_mutation_engine(target_graph)
         ttl = req.compromise_ttl_minutes if req else 30
-        return live_mutations.resolve_auth_conflict(compromise_ttl_minutes=ttl)
+        return engine.resolve_auth_conflict(compromise_ttl_minutes=ttl)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error in resolve_auth_conflict: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/api/mutate/resolve-retention-conflict")
+@app.post("/api/mutate/resolve-retention-conflict", dependencies=[Depends(require_write)])
 def resolve_retention_conflict(req: Optional[ResolveRetentionRequest] = Body(default=None)):
-    """Live Mutation: Resolves 30-day vs 180-day retention conflict via tiered storage standard."""
-    from src.pipeline.mutations import live_mutations
+    """Live Mutation: Resolves 30-day vs 180-day retention conflict on the targeted graph tenant. Requires 'write' role."""
     try:
+        target_graph = validate_graph(req.graph if req else None)
+        engine = get_mutation_engine(target_graph)
         days = req.retention_days if req else 90
-        return live_mutations.resolve_retention_conflict(retention_days=days)
+        return engine.resolve_retention_conflict(retention_days=days)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error in resolve_retention_conflict: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/api/mutate/merge-teams")
+@app.post("/api/mutate/merge-teams", dependencies=[Depends(require_write)])
 def merge_teams(req: Optional[MergeTeamsRequest] = Body(default=None)):
-    """Live Mutation: Merges SecArch and Identity Growth into Unified Engineering Org."""
-    from src.pipeline.mutations import live_mutations
+    """Live Mutation: Merges SecArch and Identity Growth on targeted tenant. Requires 'write' role."""
     try:
+        target_graph = validate_graph(req.graph if req else None)
+        engine = get_mutation_engine(target_graph)
         if req:
-            return live_mutations.merge_teams(
+            return engine.merge_teams(
                 team_a_id=req.team_a_id,
                 team_b_id=req.team_b_id,
                 unified_name=req.unified_name,
             )
-        return live_mutations.merge_teams()
+        return engine.merge_teams()
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error in merge_teams: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/api/mutate/reset-demo")
-def reset_demo_graph():
-    """Resets FalkorDB multigraphs to pristine initial Phase 1/2 state."""
-    from src.pipeline.mutations import live_mutations
+@app.post("/api/mutate/reset-demo", dependencies=[Depends(require_admin)])
+def reset_demo_graph(req: Optional[ResetDemoRequest] = Body(default=None)):
+    """Resets FalkorDB multigraphs to pristine initial Phase 1/2 state. Protected separately by 'admin' role."""
     try:
-        return live_mutations.reset_demo(include_subgraph=True)
+        target_graph = validate_graph(req.graph if req else None)
+        engine = get_mutation_engine(target_graph)
+        return engine.reset_demo(include_subgraph=True)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error in reset_demo_graph: {e}")
         raise HTTPException(status_code=500, detail=str(e))

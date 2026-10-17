@@ -66,9 +66,23 @@ async function extractErrorMessage(res: Response, fallbackPrefix: string): Promi
   return res.statusText ? `${fallbackPrefix}: ${res.statusText}` : `${fallbackPrefix} (HTTP ${res.status})`;
 }
 
+const DEFAULT_API_KEY = process.env.NEXT_PUBLIC_ORGBRIDGE_API_KEY || "orgbridge-war-room-2026";
+const DEFAULT_ADMIN_KEY = process.env.NEXT_PUBLIC_ORGBRIDGE_ADMIN_KEY || "orgbridge-admin-war-room-2026";
+
+function getAuthHeaders(includeAdmin = false): Record<string, string> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "X-API-Key": DEFAULT_API_KEY,
+  };
+  if (includeAdmin) {
+    headers["X-Admin-Key"] = DEFAULT_ADMIN_KEY;
+  }
+  return headers;
+}
+
 export async function checkBackendHealth() {
   try {
-    const res = await fetch(`${API_BASE}/api/health`, { cache: "no-store" });
+    const res = await fetch(`${API_BASE}/api/health`, { credentials: "omit", cache: "no-store" });
     if (!res.ok) return { healthy: false };
     return await res.json();
   } catch (e) {
@@ -78,7 +92,7 @@ export async function checkBackendHealth() {
 
 export async function fetchFullSubgraph(graphName?: string): Promise<SubgraphData> {
   const url = graphName ? `${API_BASE}/api/graph/subgraph?graph=${graphName}` : `${API_BASE}/api/graph/subgraph`;
-  const res = await fetchWithRetry(url, { cache: "no-store" });
+  const res = await fetchWithRetry(url, { headers: getAuthHeaders(), cache: "no-store" });
   if (!res.ok) {
     const errMsg = await extractErrorMessage(res, "Failed to load graph");
     throw new Error(errMsg);
@@ -89,7 +103,7 @@ export async function fetchFullSubgraph(graphName?: string): Promise<SubgraphDat
 export async function callTool(endpoint: string, payload?: Record<string, any>): Promise<ToolResponse> {
   const res = await fetchWithRetry(`${API_BASE}/api/tools/${endpoint}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: getAuthHeaders(),
     body: payload ? JSON.stringify(payload) : undefined,
   });
   if (!res.ok) {
@@ -101,6 +115,7 @@ export async function callTool(endpoint: string, payload?: Record<string, any>):
 
 export async function mutateGraph(
   action: "resolve-auth" | "resolve-retention" | "merge-teams" | "reset-demo",
+  graph?: string,
   payload?: Record<string, any>
 ): Promise<any> {
   let endpoint = "";
@@ -109,10 +124,16 @@ export async function mutateGraph(
   else if (action === "merge-teams") endpoint = "/api/mutate/merge-teams";
   else if (action === "reset-demo") endpoint = "/api/mutate/reset-demo";
 
+  const headers = getAuthHeaders(action === "reset-demo");
+  const bodyData = {
+    ...(payload || {}),
+    ...(graph ? { graph } : {}),
+  };
+
   const res = await fetchWithRetry(`${API_BASE}${endpoint}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: payload ? JSON.stringify(payload) : undefined,
+    headers,
+    body: JSON.stringify(bodyData),
   });
   if (!res.ok) {
     const errMsg = await extractErrorMessage(res, "Mutation failed");
@@ -124,7 +145,7 @@ export async function mutateGraph(
 export async function chatWithAgent(prompt: string, graph?: string): Promise<ToolResponse> {
   const res = await fetchWithRetry(`${API_BASE}/api/chat`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: getAuthHeaders(),
     body: JSON.stringify({ prompt, graph }),
   });
   if (!res.ok) {

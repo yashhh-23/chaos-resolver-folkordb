@@ -7,6 +7,7 @@ from src.tools.mcp_server import MCP_TOOL_DEFINITIONS, execute_tool
 from src.api.main import app
 
 client = TestClient(app)
+client.headers = {"X-API-Key": "orgbridge-war-room-2026"}
 
 
 def test_mcp_tool_definitions_schema():
@@ -151,5 +152,54 @@ def test_llm_agent_chat_and_cypher():
     )
     assert blocked_res.status == "error"
     assert "Security Violation" in blocked_res.text_answer
+
+
+def test_security_and_authorization():
+    """Verifies that unauthenticated callers are rejected (401) and write/admin roles are enforced (403)."""
+    unauthed_client = TestClient(app)
+
+    # 1. Unauthenticated mutation blocked with 401
+    res = unauthed_client.post("/api/mutate/resolve-auth-conflict", json={"compromise_ttl_minutes": 30})
+    assert res.status_code == 401
+
+    # 2. Unauthenticated chat blocked with 401
+    res = unauthed_client.post("/api/chat", json={"prompt": "Show me silos"})
+    assert res.status_code == 401
+
+    # 3. Unauthenticated reset blocked with 401
+    res = unauthed_client.post("/api/mutate/reset-demo", json={})
+    assert res.status_code == 401
+
+    # 4. Authenticated write client can perform mutations
+    authed_client = TestClient(app)
+    authed_client.headers = {"X-API-Key": "orgbridge-war-room-2026"}
+    res = authed_client.post("/api/mutate/resolve-auth-conflict", json={"compromise_ttl_minutes": 30})
+    assert res.status_code == 200
+
+    # 5. Write key without admin role cannot perform destructive reset (403 Forbidden)
+    reset_forbidden = authed_client.post("/api/mutate/reset-demo", json={})
+    assert reset_forbidden.status_code == 403
+
+    # 6. Admin client with X-Admin-Key is authorized for reset-demo
+    admin_client = TestClient(app)
+    admin_client.headers = {"X-Admin-Key": "orgbridge-admin-war-room-2026"}
+    reset_ok = admin_client.post("/api/mutate/reset-demo", json={})
+    assert reset_ok.status_code == 200
+
+
+def test_tenant_specific_mutations():
+    """Verifies that mutations validate tenant graph parameter and operate on requested graph."""
+    authed_client = TestClient(app)
+    authed_client.headers = {"X-API-Key": "orgbridge-war-room-2026"}
+
+    # Invalid tenant graph rejected with 400
+    bad_res = authed_client.post("/api/mutate/resolve-auth-conflict", json={"graph": "invalid_graph_name"})
+    assert bad_res.status_code == 400
+    assert "Invalid graph tenant" in bad_res.json()["detail"]
+
+    # Target specific valid graph tenant
+    finpay_res = authed_client.post("/api/mutate/resolve-auth-conflict", json={"graph": "finpay_graph", "compromise_ttl_minutes": 25})
+    assert finpay_res.status_code == 200
+    assert finpay_res.json()["status"] == "success"
 
 

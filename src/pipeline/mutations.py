@@ -7,7 +7,7 @@ Executes transactional Cypher MERGE, SET, and DELETE operations in FalkorDB to:
 3. Keep real-time knowledge current as M&A integration progresses.
 """
 
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from datetime import datetime
 from src.config import settings
 from src.utils.logger import logger
@@ -44,25 +44,38 @@ class LiveMutationEngine:
         dec_note = f"Superceded by Unified {compromise_ttl_minutes}-min JWT Decision"
 
         # Step 1: Update conflicting policies and decisions to DEPRECATED
-        deprecate_query = """
-            MATCH (p1:Policy {id: 'finpay:pol:session_security'})-[r:CONFLICTS_WITH]->(p2:Policy {id: 'vaultly:pol:session_continuity'})
-            SET p1.status = 'DEPRECATED',
-                p2.status = 'DEPRECATED',
-                r.status = 'RESOLVED',
-                r.resolved_at = $timestamp,
-                r.resolution_note = 'Superceded by Unified M&A Hybrid Session Standard'
-        """
-        graph.query(deprecate_query, {"timestamp": now_ts})
+        if self.graph_name == settings.graph_merged:
+            deprecate_query = """
+                MATCH (p1:Policy {id: 'finpay:pol:session_security'})-[r:CONFLICTS_WITH]->(p2:Policy {id: 'vaultly:pol:session_continuity'})
+                SET p1.status = 'DEPRECATED',
+                    p2.status = 'DEPRECATED',
+                    r.status = 'RESOLVED',
+                    r.resolved_at = $timestamp,
+                    r.resolution_note = 'Superceded by Unified M&A Hybrid Session Standard'
+            """
+            graph.query(deprecate_query, {"timestamp": now_ts})
 
-        deprecate_dec_query = """
-            MATCH (d1:Decision {id: 'finpay:dec:jwt_15m'})-[rd:CONFLICTS_WITH]->(d2:Decision {id: 'vaultly:dec:session_7d'})
-            SET d1.status = 'DEPRECATED',
-                d2.status = 'DEPRECATED',
-                rd.status = 'RESOLVED',
-                rd.resolved_at = $timestamp,
-                rd.resolution_note = $resolution_note
-        """
-        graph.query(deprecate_dec_query, {"timestamp": now_ts, "resolution_note": dec_note})
+            deprecate_dec_query = """
+                MATCH (d1:Decision {id: 'finpay:dec:jwt_15m'})-[rd:CONFLICTS_WITH]->(d2:Decision {id: 'vaultly:dec:session_7d'})
+                SET d1.status = 'DEPRECATED',
+                    d2.status = 'DEPRECATED',
+                    rd.status = 'RESOLVED',
+                    rd.resolved_at = $timestamp,
+                    rd.resolution_note = $resolution_note
+            """
+            graph.query(deprecate_dec_query, {"timestamp": now_ts, "resolution_note": dec_note})
+        else:
+            # Isolated tenant graph: deprecate policies and decisions present in this tenant
+            graph.query("""
+                MATCH (p:Policy)
+                WHERE p.id IN ['finpay:pol:session_security', 'vaultly:pol:session_continuity']
+                SET p.status = 'DEPRECATED'
+            """)
+            graph.query("""
+                MATCH (d:Decision)
+                WHERE d.id IN ['finpay:dec:jwt_15m', 'vaultly:dec:session_7d']
+                SET d.status = 'DEPRECATED'
+            """)
 
         # Step 2: Create Unified M&A Policy and Decision
         create_unified_query = """
@@ -117,12 +130,10 @@ class LiveMutationEngine:
         relink_query = """
             MATCH (pol:Policy {id: 'unified:pol:hybrid_session_auth'})
             MATCH (dec:Decision {id: $dec_id})
-            MATCH (s1:System {id: 'finpay:sys:gatekeeper_auth'})
-            MATCH (s2:System {id: 'vaultly:sys:pulse_identity'})
-            MERGE (s1)-[:GOVERNED_BY]->(pol)
-            MERGE (s2)-[:GOVERNED_BY]->(pol)
-            MERGE (s1)-[:GOVERNED_BY]->(dec)
-            MERGE (s2)-[:GOVERNED_BY]->(dec)
+            MATCH (s:System)
+            WHERE s.id IN ['finpay:sys:gatekeeper_auth', 'vaultly:sys:pulse_identity']
+            MERGE (s)-[:GOVERNED_BY]->(pol)
+            MERGE (s)-[:GOVERNED_BY]->(dec)
         """
         graph.query(relink_query, {"dec_id": dec_id})
 
@@ -175,25 +186,38 @@ class LiveMutationEngine:
         dec_summary = f"Adopt {retention_days}-day tiered retention with cold storage for audit logs"
         res_note = f"Superceded by Tiered {retention_days}-Day Audit Standard"
 
-        deprecate_query = """
-            MATCH (p1:Policy {id: 'finpay:pol:retention_compliance'})-[r:CONFLICTS_WITH]->(p2:Policy {id: 'vaultly:pol:forensic_audit_retention'})
-            SET p1.status = 'DEPRECATED',
-                p2.status = 'DEPRECATED',
-                r.status = 'RESOLVED',
-                r.resolved_at = $timestamp,
-                r.resolution_note = $resolution_note
-        """
-        graph.query(deprecate_query, {"timestamp": now_ts, "resolution_note": res_note})
+        # Step 1: Update conflicting policies and decisions to DEPRECATED
+        if self.graph_name == settings.graph_merged:
+            deprecate_query = """
+                MATCH (p1:Policy {id: 'finpay:pol:retention_compliance'})-[r:CONFLICTS_WITH]->(p2:Policy {id: 'vaultly:pol:forensic_audit_retention'})
+                SET p1.status = 'DEPRECATED',
+                    p2.status = 'DEPRECATED',
+                    r.status = 'RESOLVED',
+                    r.resolved_at = $timestamp,
+                    r.resolution_note = $resolution_note
+            """
+            graph.query(deprecate_query, {"timestamp": now_ts, "resolution_note": res_note})
 
-        deprecate_dec_query = """
-            MATCH (d1:Decision {id: 'finpay:dec:log_purge_30d'})-[rd:CONFLICTS_WITH]->(d2:Decision {id: 'vaultly:dec:log_retention_180d'})
-            SET d1.status = 'DEPRECATED',
-                d2.status = 'DEPRECATED',
-                rd.status = 'RESOLVED',
-                rd.resolved_at = $timestamp,
-                rd.resolution_note = $resolution_note
-        """
-        graph.query(deprecate_dec_query, {"timestamp": now_ts, "resolution_note": res_note})
+            deprecate_dec_query = """
+                MATCH (d1:Decision {id: 'finpay:dec:log_purge_30d'})-[rd:CONFLICTS_WITH]->(d2:Decision {id: 'vaultly:dec:log_retention_180d'})
+                SET d1.status = 'DEPRECATED',
+                    d2.status = 'DEPRECATED',
+                    rd.status = 'RESOLVED',
+                    rd.resolved_at = $timestamp,
+                    rd.resolution_note = $resolution_note
+            """
+            graph.query(deprecate_dec_query, {"timestamp": now_ts, "resolution_note": res_note})
+        else:
+            graph.query("""
+                MATCH (p:Policy)
+                WHERE p.id IN ['finpay:pol:retention_compliance', 'vaultly:pol:forensic_audit_retention']
+                SET p.status = 'DEPRECATED'
+            """)
+            graph.query("""
+                MATCH (d:Decision)
+                WHERE d.id IN ['finpay:dec:log_purge_30d', 'vaultly:dec:log_retention_180d']
+                SET d.status = 'DEPRECATED'
+            """)
 
         create_unified_query = """
             MERGE (pol:Policy {id: $pol_id})
@@ -236,12 +260,11 @@ class LiveMutationEngine:
 
             MERGE (pol)-[:SUPERSEDES]->(dec)
 
-            MERGE (s1:System {id: 'finpay:sys:finpay_mesh_gateway'})
-            MERGE (s2:System {id: 'vaultly:sys:vaultly_public_api'})
-            MERGE (s1)-[:GOVERNED_BY]->(pol)
-            MERGE (s2)-[:GOVERNED_BY]->(pol)
-            MERGE (s1)-[:GOVERNED_BY]->(dec)
-            MERGE (s2)-[:GOVERNED_BY]->(dec)
+            WITH pol, dec
+            MATCH (s:System)
+            WHERE s.id IN ['finpay:sys:finpay_mesh_gateway', 'vaultly:sys:vaultly_public_api']
+            MERGE (s)-[:GOVERNED_BY]->(pol)
+            MERGE (s)-[:GOVERNED_BY]->(dec)
         """
         graph.query(create_unified_query, {
             "pol_id": pol_id,
@@ -429,3 +452,8 @@ class LiveMutationEngine:
 
 
 live_mutations = LiveMutationEngine()
+
+
+def get_mutation_engine(graph_name: Optional[str] = None) -> LiveMutationEngine:
+    """Returns a LiveMutationEngine instance bound to the requested tenant or default merged_brain."""
+    return LiveMutationEngine(graph_name=graph_name) if graph_name else live_mutations

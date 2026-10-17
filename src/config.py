@@ -38,11 +38,28 @@ class Settings(BaseSettings):
     warm_intro_max_bidirectional_hops: int = 4
     silos_subgraph_max_nodes: int = 25
 
+    # Security & API Authorization
+    api_key: str = "orgbridge-war-room-2026"
+    admin_api_key: str = "orgbridge-admin-war-room-2026"
+    cors_allowed_origins: str = (
+        "https://falkordb-powered-resolver.vercel.app,"
+        "http://localhost:3000,"
+        "http://127.0.0.1:3000"
+    )
+
     # General
     environment: str = "development"
     log_level: str = "INFO"
 
-    @field_validator("groq_api_key", "openai_api_key", "falkordb_host", "falkordb_password", mode="before")
+    @field_validator(
+        "groq_api_key",
+        "openai_api_key",
+        "falkordb_host",
+        "falkordb_password",
+        "api_key",
+        "admin_api_key",
+        mode="before",
+    )
     @classmethod
     def strip_whitespace(cls, v: Optional[str]) -> Optional[str]:
         if isinstance(v, str):

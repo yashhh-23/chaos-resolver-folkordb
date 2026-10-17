@@ -491,7 +491,7 @@ export default function ChatPanel({
     setIsLoading(true);
 
     try {
-      const res = await mutateGraph(action);
+      const res = await mutateGraph(action, selectedGraph);
       onBackendHealthy?.();
 
       const actionTitleMap: Record<string, string> = {
