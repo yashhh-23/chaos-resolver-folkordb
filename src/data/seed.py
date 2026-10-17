@@ -8,7 +8,7 @@ Populates:
 
 import argparse
 import sys
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 from src.config import settings
 from src.utils.logger import logger
 from src.db.client import db_client
@@ -18,8 +18,26 @@ from src.data.builder import (
 )
 
 
-def seed_graph(graph_name: str, queries: List[str], clear_first: bool = False) -> Dict[str, Any]:
-    """Executes a list of Cypher queries on the specified FalkorDB graph with post-seeding invariant verification."""
+def seed_graph(
+    graph_name: str,
+    queries: Optional[List[str]] = None,
+    clear_first: bool = False,
+    preserve_runtime_state: Optional[bool] = None,
+) -> Dict[str, Any]:
+    """Executes a list of Cypher queries on the specified FalkorDB graph with post-seeding invariant verification.
+
+    If preserve_runtime_state is True (default when clear_first is False):
+        - Uses selective property updates to preserve runtime mutations (DEPRECATED, MERGED, embeddings).
+    If preserve_runtime_state is False (destructive baseline restoration):
+        - Uses full property replacement to restore clean baseline.
+    """
+    if preserve_runtime_state is None:
+        preserve_runtime_state = not clear_first
+
+    if queries is None:
+        scripts = generate_graph_cypher_scripts(preserve_runtime_state=preserve_runtime_state)
+        queries = scripts[graph_name]
+
     graph = db_client.get_graph(graph_name)
     success_count = 0
     error_count = 0
@@ -35,7 +53,16 @@ def seed_graph(graph_name: str, queries: List[str], clear_first: bool = False) -
     logger.info(f"[{graph_name}] Executing {len(queries)} Cypher statements...")
     for idx, query in enumerate(queries, 1):
         try:
-            graph.query(query)
+            res = graph.query(query)
+            # Post-execution relationship verification: check created_count (B12)
+            if res and hasattr(res, "result_set") and res.result_set:
+                first_row = res.result_set[0]
+                if len(first_row) == 1 and isinstance(first_row[0], int) and "created_count" in query:
+                    cnt = first_row[0]
+                    if cnt == 0:
+                        raise ValueError(f"Endpoint validation failure: 0 matching endpoints or relationships created for query #{idx}")
+                    elif cnt > 1:
+                        raise ValueError(f"Endpoint collision: Expected 1 relationship, matched {cnt} relationships for query #{idx}")
             success_count += 1
         except Exception as e:
             # Safe ignore for already existing index in FalkorDB
@@ -43,7 +70,7 @@ def seed_graph(graph_name: str, queries: List[str], clear_first: bool = False) -
             if any(sub in err_str for sub in ["already exists", "equivalent index", "already indexed"]):
                 success_count += 1
             else:
-                logger.error(f"[{graph_name}] Error executing query #{idx}: {query} -> {e}")
+                logger.error(f"[{graph_name}] Error executing query #{idx}: {query[:120]} -> {e}")
                 error_count += 1
                 failed_details.append({"query_index": idx, "query": query, "error": str(e)})
 
@@ -75,15 +102,26 @@ def seed_graph(graph_name: str, queries: List[str], clear_first: bool = False) -
     }
 
 
-def seed_all_graphs(clear_first: bool = False) -> Dict[str, Any]:
+def seed_all_graphs(
+    clear_first: bool = False,
+    preserve_runtime_state: Optional[bool] = None,
+) -> Dict[str, Any]:
     """Seeds finpay_graph, vaultly_graph, and merged_brain in FalkorDB with strict verification across all graphs."""
-    scripts = generate_graph_cypher_scripts()
+    if preserve_runtime_state is None:
+        preserve_runtime_state = not clear_first
+
+    scripts = generate_graph_cypher_scripts(preserve_runtime_state=preserve_runtime_state)
     summary = {}
     total_failed = 0
 
     for graph_name, queries in scripts.items():
         logger.info(f"=== Seeding {graph_name} ===")
-        res = seed_graph(graph_name, queries, clear_first=clear_first)
+        res = seed_graph(
+            graph_name,
+            queries=queries,
+            clear_first=clear_first,
+            preserve_runtime_state=preserve_runtime_state,
+        )
         summary[graph_name] = res
         total_failed += res.get("failed", 0)
         if res.get("status") != "success":
@@ -122,8 +160,10 @@ def main():
     parser = argparse.ArgumentParser(description="OrgBridge AI - FalkorDB Phase 1 Seeder")
     parser.add_argument(
         "--clear",
+        "--destructive",
         action="store_true",
-        help="Clear existing graph nodes before inserting (DETACH DELETE)",
+        dest="clear",
+        help="Perform destructive baseline restoration, clearing existing nodes before inserting",
     )
     parser.add_argument(
         "--export-only",

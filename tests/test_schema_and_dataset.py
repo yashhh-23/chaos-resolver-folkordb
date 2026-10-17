@@ -26,7 +26,10 @@ from src.data.synthetic_data import (
     get_shared_external_dependencies,
     get_ma_bridge_relationships,
 )
-from src.data.builder import generate_graph_cypher_scripts
+from src.data.builder import (
+    generate_graph_cypher_scripts,
+    validate_dataset_uniqueness_and_endpoints,
+)
 
 
 def test_allowed_labels_and_relationships():
@@ -233,4 +236,92 @@ def test_parameterized_cypher_templates():
     assert "$domain" in tmpl["template"]
     assert "$limit" in tmpl["template"]
     assert "RETURN" in tmpl["template"]
+
+
+def test_node_merge_preserves_runtime_state_and_destructive_baseline():
+    """Verifies B11: Selective property updates preserve runtime status & fields, while destructive mode restores baseline."""
+    pol_props = {
+        "id": "finpay:pol:session_security",
+        "name": "Strict Ephemeral Session Standard",
+        "status": "ACTIVE",
+        "domain": "Authentication",
+    }
+
+    # 1. Ordinary ingestion (preserve_runtime_state=True)
+    ordinary_cypher = build_node_merge_cypher("Policy", pol_props, preserve_runtime_state=True)
+    assert "ON MATCH SET" in ordinary_cypher
+    assert "n +=" in ordinary_cypher
+    # Ensure mutated statuses like DEPRECATED are protected from being overwritten to ACTIVE
+    assert "CASE WHEN n.status IN ['DEPRECATED', 'MERGED', 'RESOLVED'] THEN n.status ELSE 'ACTIVE' END" in ordinary_cypher
+
+    # Node without status uses n += for all props
+    person_props = {"id": "finpay:person:aarav", "name": "Aarav Mehta"}
+    person_cypher = build_node_merge_cypher("Person", person_props, preserve_runtime_state=True)
+    assert "ON MATCH SET n +=" in person_cypher
+    assert "CASE WHEN" not in person_cypher
+
+    # 2. Destructive baseline restoration (preserve_runtime_state=False)
+    destructive_cypher = build_node_merge_cypher("Policy", pol_props, preserve_runtime_state=False)
+    assert "ON MATCH SET n = {" in destructive_cypher
+    assert "CASE WHEN" not in destructive_cypher
+
+
+def test_relationship_builder_label_constraints_and_endpoint_verification():
+    """Verifies B12: Relationship builder constrains endpoint labels and verifies created_count."""
+    # 1. Inferred endpoint labels from IDs
+    cypher = build_relationship_merge_cypher(
+        source_id="finpay:sys:gatekeeper_auth",
+        target_id="vaultly:sys:pulse_identity",
+        rel_type="REDUNDANT_WITH",
+    )
+    assert "MATCH (a:System {id: 'finpay:sys:gatekeeper_auth'}), (b:System {id: 'vaultly:sys:pulse_identity'})" in cypher
+    assert "RETURN count(r) as created_count" in cypher
+
+    # 2. Inferred endpoint labels for Person to Team
+    member_cypher = build_relationship_merge_cypher(
+        source_id="finpay:person:aarav_mehta",
+        target_id="finpay:team:secarch",
+        rel_type="MEMBER_OF",
+    )
+    assert "MATCH (a:Person {id: 'finpay:person:aarav_mehta'}), (b:Team {id: 'finpay:team:secarch'})" in member_cypher
+    assert "RETURN count(r) as created_count" in member_cypher
+
+    # 3. Explicit label override
+    override_cypher = build_relationship_merge_cypher(
+        source_id="custom:id:1",
+        target_id="custom:id:2",
+        rel_type="SUPERSEDES",
+        source_label="Policy",
+        target_label="Decision",
+    )
+    assert "MATCH (a:Policy {id: 'custom:id:1'}), (b:Decision {id: 'custom:id:2'})" in override_cypher
+
+
+def test_dataset_uniqueness_and_endpoint_validation():
+    """Verifies B12: Dataset validation catches duplicate entity IDs and missing relationship endpoints."""
+    from src.schema.models import Relationship
+
+    # 1. Duplicate entity ID detection
+    dataset_with_dup = {
+        "people": [
+            Person(id="finpay:person:dup_1", name="User A", role="Eng", department="Core", email="a@finpay.com", company_origin=CompanyOrigin.FINPAY),
+            Person(id="finpay:person:dup_1", name="User B", role="Eng", department="Core", email="b@finpay.com", company_origin=CompanyOrigin.FINPAY),
+        ],
+        "relationships": [],
+    }
+    with pytest.raises(ValueError, match="Duplicate entity ID detected"):
+        validate_dataset_uniqueness_and_endpoints(dataset_with_dup)
+
+    # 2. Missing relationship endpoint detection
+    dataset_with_missing_endpoint = {
+        "people": [
+            Person(id="finpay:person:valid_user", name="User A", role="Eng", department="Core", email="a@finpay.com", company_origin=CompanyOrigin.FINPAY),
+        ],
+        "relationships": [
+            Relationship(source_id="finpay:person:valid_user", target_id="finpay:team:non_existent", rel_type="MEMBER_OF"),
+        ],
+    }
+    with pytest.raises(ValueError, match="Referential integrity failure.*missing target endpoint"):
+        validate_dataset_uniqueness_and_endpoints(dataset_with_missing_endpoint)
+
 

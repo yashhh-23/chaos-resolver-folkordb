@@ -596,8 +596,8 @@ class LiveMutationEngine:
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         logger.info(f"[{self.graph_name}] Resetting demo multigraphs in FalkorDB with multi-stage verification...")
 
-        # Stage 1: Seeding with strict failure check
-        seed_result = seed_all_graphs(clear_first=True)
+        # Stage 1: Seeding with strict failure check (destructive baseline restoration B11)
+        seed_result = seed_all_graphs(clear_first=True, preserve_runtime_state=False)
         if seed_result.get("status") != "success" or seed_result.get("total_failures", 0) > 0:
             err_msg = f"Reset failed during graph seeding stage: {seed_result.get('total_failures')} statement(s) failed."
             logger.error(f"[{self.graph_name}] {err_msg}")

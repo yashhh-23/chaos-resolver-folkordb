@@ -311,3 +311,46 @@ def test_reset_demo_multi_stage_verification_and_failure(mutation_engine, monkey
         mutation_engine.reset_demo(include_subgraph=False)
 
 
+def test_reseed_preserves_live_mutation_state_and_destructive_reset(mutation_engine):
+    """Verifies B11: Ordinary reseeding (clear_first=False) preserves runtime mutated status & embeddings,
+
+    while destructive reset restores clean baseline.
+    """
+    from src.data.seed import seed_graph
+
+    # 1. Resolve auth conflict, mutating finpay:pol:session_security to DEPRECATED
+    res = mutation_engine.resolve_auth_conflict(compromise_ttl_minutes=30)
+    assert res["status"] == "success"
+
+    # Also attach a dummy embedding property to verify it is preserved
+    graph = db_client.get_graph(settings.graph_merged)
+    graph.query("MATCH (p:Policy {id: 'finpay:pol:session_security'}) SET p.runtime_embedding = [0.123, 0.456]")
+
+    # Verify pre-condition
+    check_pre = graph.query("MATCH (p:Policy {id: 'finpay:pol:session_security'}) RETURN p.status, p.runtime_embedding").result_set
+    assert len(check_pre) > 0
+    assert check_pre[0][0] == "DEPRECATED"
+    assert len(check_pre[0][1]) == 2
+
+    # 2. Run ordinary reseeding without clearing (clear_first=False, preserve_runtime_state=True)
+    seed_res = seed_graph(settings.graph_merged, clear_first=False, preserve_runtime_state=True)
+    assert seed_res["status"] == "success"
+
+    # Verify that status is STILL DEPRECATED and runtime_embedding was NOT blown away
+    check_post = graph.query("MATCH (p:Policy {id: 'finpay:pol:session_security'}) RETURN p.status, p.runtime_embedding").result_set
+    assert len(check_post) > 0
+    assert check_post[0][0] == "DEPRECATED", "Ordinary re-seed must not overwrite live-mutated status"
+    assert len(check_post[0][1]) == 2, "Ordinary re-seed must preserve runtime-added node properties"
+
+    # 3. Now run authorized destructive reset (clear_first=True, preserve_runtime_state=False)
+    reset_res = mutation_engine.reset_demo(include_subgraph=False)
+    assert reset_res["status"] == "success"
+
+    # Verify that clean baseline is restored
+    check_baseline = graph.query("MATCH (p:Policy {id: 'finpay:pol:session_security'}) RETURN p.status, p.runtime_embedding").result_set
+    assert len(check_baseline) > 0
+    assert check_baseline[0][0] == "ACTIVE"
+    assert check_baseline[0][1] is None or check_baseline[0][1] == ""
+
+
+

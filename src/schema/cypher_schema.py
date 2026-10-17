@@ -1,6 +1,6 @@
 """Cypher schema definitions, indexing rules, and query constraints for FalkorDB."""
 
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Tuple, Optional
 import re
 
 # Strict label and relationship contracts for the M&A Brain
@@ -294,14 +294,93 @@ def format_cypher_properties(properties: Dict[str, Any], prefix: str = "") -> st
     return "{" + ", ".join(props) + "}"
 
 
-def build_node_merge_cypher(label: str, properties: Dict[str, Any]) -> str:
-    """Builds a MERGE Cypher statement for a node using its unique ID."""
+ID_TYPE_TO_LABEL: Dict[str, str] = {
+    "person": "Person",
+    "people": "Person",
+    "team": "Team",
+    "teams": "Team",
+    "sys": "System",
+    "system": "System",
+    "systems": "System",
+    "doc": "Document",
+    "document": "Document",
+    "documents": "Document",
+    "tkt": "Ticket",
+    "ticket": "Ticket",
+    "tickets": "Ticket",
+    "dec": "Decision",
+    "decision": "Decision",
+    "decisions": "Decision",
+    "pol": "Policy",
+    "policy": "Policy",
+    "policies": "Policy",
+    "api": "ExternalAPI",
+    "ext": "ExternalAPI",
+}
+
+RELATIONSHIP_DEFAULT_LABELS: Dict[str, Tuple[Optional[str], Optional[str]]] = {
+    "OWNS": ("Team", "System"),
+    "MEMBER_OF": ("Person", "Team"),
+    "AUTHORED": ("Person", "Document"),
+    "RESOLVED": ("Person", "Ticket"),
+    "AFFECTS": ("Ticket", "System"),
+    "DEPENDS_ON": ("System", "System"),
+    "CALLS": ("System", "ExternalAPI"),
+    "DERIVED_FROM": ("Decision", None),
+    "REDUNDANT_WITH": ("System", "System"),
+    "GOVERNED_BY": ("System", None),
+}
+
+
+def infer_label_from_id(node_id: str) -> Optional[str]:
+    """Infers the schema node label from namespaced ID prefixes (B12)."""
+    if not node_id:
+        return None
+    parts = node_id.strip().split(":")
+    if len(parts) >= 2:
+        token = parts[1].lower() if parts[0].lower() in ["finpay", "vaultly", "unified", "test"] else parts[0].lower()
+        if token in ID_TYPE_TO_LABEL:
+            return ID_TYPE_TO_LABEL[token]
+    if node_id.startswith("ext:"):
+        return "ExternalAPI"
+    return None
+
+
+def build_node_merge_cypher(
+    label: str,
+    properties: Dict[str, Any],
+    preserve_runtime_state: bool = True,
+) -> str:
+    """Builds a MERGE Cypher statement for a node using its unique ID (B11).
+
+    If preserve_runtime_state is True (default for ordinary ingestion):
+        - Uses selective property updates (n += {props}) rather than replacing the node map (n = {props}),
+          preserving runtime properties like 'embedding', 'merged_into', 'historical_members', etc.
+        - Preserves runtime mutation status (DEPRECATED, MERGED, RESOLVED) from being overwritten back to ACTIVE.
+    If preserve_runtime_state is False (destructive baseline restoration):
+        - Uses full property replacement (ON MATCH SET n = {props}) to restore clean baseline.
+    """
     if label not in ALLOWED_LABELS:
         raise ValueError(f"Label '{label}' is not in allowed schema labels: {ALLOWED_LABELS}")
 
     props_repr = format_cypher_properties(properties)
     node_id = escape_cypher_value(properties.get("id", ""))
-    return f"MERGE (n:{label} {{id: '{node_id}'}}) ON CREATE SET n = {props_repr} ON MATCH SET n = {props_repr}"
+
+    if not preserve_runtime_state:
+        return f"MERGE (n:{label} {{id: '{node_id}'}}) ON CREATE SET n = {props_repr} ON MATCH SET n = {props_repr}"
+
+    if "status" in properties:
+        non_status_props = {k: v for k, v in properties.items() if k != "status"}
+        non_status_repr = format_cypher_properties(non_status_props)
+        seed_status = escape_cypher_value(properties["status"])
+        match_clause = (
+            f"n += {non_status_repr}, "
+            f"n.status = CASE WHEN n.status IN ['DEPRECATED', 'MERGED', 'RESOLVED'] THEN n.status ELSE '{seed_status}' END"
+        )
+    else:
+        match_clause = f"n += {props_repr}"
+
+    return f"MERGE (n:{label} {{id: '{node_id}'}}) ON CREATE SET n = {props_repr} ON MATCH SET {match_clause}"
 
 
 def build_relationship_merge_cypher(
@@ -309,10 +388,26 @@ def build_relationship_merge_cypher(
     target_id: str,
     rel_type: str,
     properties: Dict[str, Any] = None,
+    source_label: Optional[str] = None,
+    target_label: Optional[str] = None,
+    verify_endpoints: bool = True,
 ) -> str:
-    """Builds a MERGE Cypher statement for a relationship between two nodes."""
+    """Builds a MERGE Cypher statement for a relationship between two nodes with label constraints and endpoint validation (B12)."""
     if rel_type not in ALLOWED_RELATIONSHIPS:
         raise ValueError(f"Relationship '{rel_type}' not in allowed relationships: {ALLOWED_RELATIONSHIPS}")
+
+    # Determine source label
+    resolved_src_label = source_label or infer_label_from_id(source_id)
+    if not resolved_src_label and rel_type in RELATIONSHIP_DEFAULT_LABELS:
+        resolved_src_label = RELATIONSHIP_DEFAULT_LABELS[rel_type][0]
+
+    # Determine target label
+    resolved_tgt_label = target_label or infer_label_from_id(target_id)
+    if not resolved_tgt_label and rel_type in RELATIONSHIP_DEFAULT_LABELS:
+        resolved_tgt_label = RELATIONSHIP_DEFAULT_LABELS[rel_type][1]
+
+    src_label_str = f":{resolved_src_label}" if resolved_src_label else ""
+    tgt_label_str = f":{resolved_tgt_label}" if resolved_tgt_label else ""
 
     src_escaped = escape_cypher_value(source_id)
     tgt_escaped = escape_cypher_value(target_id)
@@ -323,7 +418,9 @@ def build_relationship_merge_cypher(
         if assignments:
             prop_assigns = f" ON CREATE SET {assignments} ON MATCH SET {assignments}"
 
+    return_clause = " RETURN count(r) as created_count" if verify_endpoints else ""
+
     return (
-        f"MATCH (a {{id: '{src_escaped}'}}), (b {{id: '{tgt_escaped}'}}) "
-        f"MERGE (a)-[r:{rel_type}]->(b){prop_assigns}"
+        f"MATCH (a{src_label_str} {{id: '{src_escaped}'}}), (b{tgt_label_str} {{id: '{tgt_escaped}'}}) "
+        f"MERGE (a)-[r:{rel_type}]->(b){prop_assigns}{return_clause}"
     )
