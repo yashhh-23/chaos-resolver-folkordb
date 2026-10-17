@@ -291,18 +291,36 @@ function renderSafeMarkdown(text: string): string {
         iconSvg = EMOJI_TO_SVG["🔍"];
       }
 
-      output.push(`<h3 class="flex items-center gap-1.5 font-bold text-cyan-400 text-sm mt-2 mb-1">${iconSvg}${formatInline(headingText)}</h3>`);
+      output.push(
+        `<h3 class="flex items-start gap-2 font-bold text-cyan-400 text-sm mt-2 mb-1">` +
+          (iconSvg ? `<span class="shrink-0 mt-0.5 flex items-center">${iconSvg}</span>` : "") +
+          `<span class="flex-1 leading-snug">${formatInline(headingText)}</span>` +
+        `</h3>`
+      );
       continue;
     }
     if (line.startsWith("#### ")) {
       const headingText = line.slice(5).trim();
       let subIcon = "";
-      if (headingText.toLowerCase().includes("critical") || headingText.toLowerCase().includes("conflict") || headingText.toLowerCase().includes("error") || headingText.toLowerCase().includes("warning")) {
+      if (
+        headingText.toLowerCase().includes("critical") ||
+        headingText.toLowerCase().includes("conflict") ||
+        headingText.toLowerCase().includes("error") ||
+        headingText.toLowerCase().includes("warning")
+      ) {
         subIcon = EMOJI_TO_SVG["⚠️"];
-      } else if (headingText.toLowerCase().includes("cross-border") || headingText.toLowerCase().includes("integrated")) {
+      } else if (
+        headingText.toLowerCase().includes("cross-border") ||
+        headingText.toLowerCase().includes("integrated")
+      ) {
         subIcon = EMOJI_TO_SVG["🔗"];
       }
-      output.push(`<h4 class="flex items-center gap-1.5 font-semibold text-slate-100 text-xs mt-1.5 mb-0.5">${subIcon}${formatInline(headingText)}</h4>`);
+      output.push(
+        `<h4 class="flex items-start gap-1.5 font-semibold text-slate-100 text-xs mt-1.5 mb-0.5">` +
+          (subIcon ? `<span class="shrink-0 mt-0.5 flex items-center">${subIcon}</span>` : "") +
+          `<span class="flex-1 leading-snug">${formatInline(headingText)}</span>` +
+        `</h4>`
+      );
       continue;
     }
 
