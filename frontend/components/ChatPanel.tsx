@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useMemo } from "react";
+import React, { useState } from "react";
 import {
   Send,
   Sparkles,
@@ -29,39 +29,6 @@ export interface Message {
   subgraph?: SubgraphData;
   timestamp: string;
 }
-
-const KNOWN_SYSTEMS_FALLBACK = [
-  "Gatekeeper-Auth",
-  "Pulse-Identity",
-  "FinPay-Core-Ledger",
-  "Vault-Engine",
-  "FinPay-Mesh-Gateway",
-  "Vaultly-Public-API",
-  "Customer-KYC-Service",
-  "User-Onboarding-Verification",
-  "core-api",
-];
-
-const KNOWN_PEOPLE_FALLBACK = [
-  "Aarav Mehta",
-  "Diya Nair",
-  "Rohan Gupta",
-  "Priya Sharma",
-  "Neha Verma",
-  "Arjun Das",
-  "Kabir Patel",
-  "Tanya Sen",
-  "Rahul Sharma",
-];
-
-const KNOWN_DOMAINS_FALLBACK = [
-  "Authentication",
-  "Data Retention",
-  "Ledger",
-  "Gateway",
-  "KYC",
-  "Core Services",
-];
 
 function escapeHtml(str: string): string {
   return str
@@ -325,36 +292,6 @@ export default function ChatPanel({
   isBackendHealthy,
   graphData,
 }: ChatPanelProps) {
-  // Dynamically derive systems, people, domains, and companies from the live graph
-  const dynamicSystems = useMemo(() => {
-    const fromGraph = (graphData?.nodes || [])
-      .filter((n) => n.label === "System" && n.name)
-      .map((n) => n.name);
-    return Array.from(new Set(fromGraph.length > 0 ? fromGraph : KNOWN_SYSTEMS_FALLBACK));
-  }, [graphData]);
-
-  const dynamicPeople = useMemo(() => {
-    const fromGraph = (graphData?.nodes || [])
-      .filter((n) => n.label === "Person" && n.name)
-      .map((n) => n.name);
-    return Array.from(new Set(fromGraph.length > 0 ? fromGraph : KNOWN_PEOPLE_FALLBACK));
-  }, [graphData]);
-
-  const dynamicDomains = useMemo(() => {
-    const fromGraph = (graphData?.nodes || [])
-      .map((n) => n.properties?.domain)
-      .filter(Boolean) as string[];
-    return Array.from(new Set(fromGraph.length > 0 ? fromGraph : KNOWN_DOMAINS_FALLBACK));
-  }, [graphData]);
-
-  const dynamicCompanies = useMemo(() => {
-    const fromGraph = (graphData?.nodes || [])
-      .map((n) => n.company_origin)
-      .filter((c) => c && c !== "External") as string[];
-    const set = new Set(fromGraph.length > 0 ? fromGraph : ["FinPay", "Vaultly", "Unified"]);
-    set.add("Unified");
-    return Array.from(set);
-  }, [graphData]);
   const [messages, setMessages] = useState<Message[]>([
     {
       id: "welcome",
@@ -494,176 +431,11 @@ export default function ChatPanel({
   };
 
   const handleCustomSubmit = async (e: React.FormEvent) => {
-
     e.preventDefault();
     if (!input.trim() || isLoading) return;
 
     const userText = input.trim();
     setInput("");
-
-    // Dynamically infer endpoint and extract entities
-    let endpoint = "find-redundant-systems";
-    let payload: any = {};
-    const lower = userText.toLowerCase();
-
-    // Disambiguated intent classifiers avoiding keyword shadowing
-    const isWhoQuery =
-      lower.includes("who") ||
-      lower.includes("whom") ||
-      lower.includes("expert") ||
-      lower.includes("sme") ||
-      lower.includes("counterpart") ||
-      lower.includes("specialist") ||
-      lower.includes("lead") ||
-      lower.includes("author") ||
-      lower.includes("point of contact");
-
-    const isSiloQuery =
-      lower.includes("silo") ||
-      lower.includes("island") ||
-      lower.includes("isolated") ||
-      lower.includes("wcc") ||
-      lower.includes("unconnected") ||
-      lower.includes("disconnected") ||
-      lower.includes("topology");
-
-    const isDecisionLineageQuery =
-      !isWhoQuery &&
-      (lower.includes("lineage") ||
-        (lower.includes("trace") && (lower.includes("decision") || lower.includes("rfc"))) ||
-        (lower.includes("decision") && (lower.includes("origin") || lower.includes("history") || lower.includes("behind") || lower.includes("for"))) ||
-        lower.includes("why does") ||
-        lower.includes("why was") ||
-        (lower.includes("rfc") && lower.includes("origin")));
-
-    const isConflictQuery =
-      lower.includes("conflict") ||
-      lower.includes("collision") ||
-      lower.includes("clash") ||
-      lower.includes("contradiction") ||
-      (lower.includes("policy") && !isWhoQuery) ||
-      lower.includes("compliance");
-
-    const isRedundantQuery =
-      lower.includes("redundant") ||
-      lower.includes("duplicate") ||
-      lower.includes("overlap") ||
-      lower.includes("stripe") ||
-      lower.includes("aadhaar") ||
-      lower.includes("kms") ||
-      lower.includes("external api") ||
-      lower.includes("shared api") ||
-      (lower.includes("connect") && (lower.includes("stripe") || lower.includes("system") || lower.includes("api") || lower.includes("service")));
-
-    const matchedPeople = dynamicPeople.filter((p) => lower.includes(p.toLowerCase()));
-    const isWarmIntroQuery =
-      !isConflictQuery &&
-      !isRedundantQuery &&
-      (lower.includes("intro") ||
-        lower.includes("warm") ||
-        lower.includes("introduce") ||
-        (lower.includes("reach") && (matchedPeople.length >= 1 || /between|from|to/i.test(userText))) ||
-        ((lower.includes("path") || lower.includes("connect")) && (matchedPeople.length >= 2 || /(?:between|from|connect)\s+[A-Z][a-z]+/i.test(userText))));
-
-    // 1. Organizational Silos (WCC)
-    if (isSiloQuery) {
-      endpoint = "detect-silos";
-      payload = {};
-    }
-    // 2. Counterpart SME Discovery (prioritized over Decision Lineage to prevent 'who authored/decided' shadowing)
-    else if (isWhoQuery) {
-      endpoint = "find-counterpart-expert";
-      // Dynamic company extraction supporting Unified entity after live mutations
-      let company = "Vaultly";
-      if (lower.includes("unified")) company = "Unified";
-      else if (lower.includes("finpay")) company = "FinPay";
-      else if (lower.includes("vaultly")) company = "Vaultly";
-      else {
-        const matchedCo = dynamicCompanies.find((c) => lower.includes(c.toLowerCase()));
-        if (matchedCo) company = matchedCo;
-      }
-
-      let topic = dynamicDomains[0] || "Authentication";
-      if (lower.includes("auth")) topic = "Authentication";
-      else if (lower.includes("retention") || lower.includes("audit") || lower.includes("log")) topic = "Data Retention";
-      else if (lower.includes("ledger") || lower.includes("balance")) topic = "Ledger";
-      else if (lower.includes("gateway") || lower.includes("mesh")) topic = "Gateway";
-      else if (lower.includes("kyc") || lower.includes("onboard")) topic = "KYC";
-      else if (lower.includes("core")) topic = "Core Services";
-      else {
-        const matchedSys = dynamicSystems.find((s) => lower.includes(s.toLowerCase()));
-        if (matchedSys) {
-          if (matchedSys.toLowerCase().includes("gatekeeper") || matchedSys.toLowerCase().includes("pulse")) {
-            topic = "Authentication";
-          } else if (matchedSys.toLowerCase().includes("ledger") || matchedSys.toLowerCase().includes("vault-engine")) {
-            topic = "Ledger";
-          }
-        } else {
-          const matchedDomain = dynamicDomains.find((d) => lower.includes(d.toLowerCase()));
-          if (matchedDomain) topic = matchedDomain;
-        }
-      }
-
-      payload = { topic, company };
-    }
-    // 3. Decision Lineage (traces rationale/lineage for a system, guaranteed not a 'who' question)
-    else if (isDecisionLineageQuery) {
-      endpoint = "trace-decision-lineage";
-      const matchedSys = dynamicSystems.find((s) => lower.includes(s.toLowerCase()));
-      let systemName = matchedSys;
-
-      if (!systemName) {
-        const quoted = userText.match(/['"]([^'"]+)['"]/);
-        const sysWord = userText.match(/(?:for|system|of)\s+([A-Za-z0-9_-]+)/i);
-        systemName = (quoted && quoted[1]) || (sysWord && sysWord[1]) || dynamicSystems[0] || "Gatekeeper-Auth";
-      }
-
-      payload = { system_name: systemName };
-    }
-    // 4. Warm Intro Path (strictly scoped to people interactions; ignores generic 'connect to system' / 'conflict path')
-    else if (isWarmIntroQuery) {
-      endpoint = "warm-intro-path";
-      let personA = matchedPeople[0];
-      let personB = matchedPeople[1];
-
-      // Try regex extraction for "between X and Y", "from X to Y", or "connect X to/with Y"
-      if (!personA || !personB) {
-        const betweenMatch = userText.match(
-          /(?:between|from|connect)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s+(?:and|to|with)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)/i
-        );
-        if (betweenMatch) {
-          personA = personA || betweenMatch[1].trim();
-          personB = personB || betweenMatch[2].trim();
-        }
-      }
-
-      payload = {
-        person_a: personA || dynamicPeople[0] || "Aarav Mehta",
-        person_b: personB || dynamicPeople[1] || "Diya Nair",
-      };
-    }
-    // 5. Policy Conflicts (guaranteed not shadowed by warm intro path)
-    else if (isConflictQuery) {
-      endpoint = "detect-policy-conflicts";
-      let domain: string | undefined = undefined;
-      if (lower.includes("auth")) domain = "Authentication";
-      else if (lower.includes("retention") || lower.includes("audit") || lower.includes("log")) domain = "Data Retention";
-      else if (lower.includes("ledger") || lower.includes("balance")) domain = "Ledger";
-      else if (lower.includes("gateway") || lower.includes("mesh")) domain = "Gateway";
-      else if (lower.includes("kyc")) domain = "KYC";
-      else if (lower.includes("core")) domain = "Core Services";
-      else {
-        const matchedDomain = dynamicDomains.find((d) => lower.includes(d.toLowerCase()));
-        if (matchedDomain) domain = matchedDomain;
-      }
-
-      payload = { domain };
-    }
-    // 6. Redundant Systems (handles microservice clusters, shared API dependencies, and default)
-    else {
-      endpoint = "find-redundant-systems";
-      payload = {};
-    }
 
     const userMsg: Message = {
       id: Date.now().toString(),
@@ -676,16 +448,8 @@ export default function ChatPanel({
     setIsLoading(true);
 
     try {
-      let res: ToolResponse;
-      try {
-        // Primary path: Autonomous Groq Llama-3.3-70B agent + Schema-Constrained Cypher (/api/chat)
-        res = await chatWithAgent(userText, selectedGraph);
-        onBackendHealthy?.();
-      } catch (agentErr) {
-        // Fallback path: Deterministic client-side tool routing if /api/chat is unreachable
-        res = await callTool(endpoint, { ...payload, graph: selectedGraph });
-        onBackendHealthy?.();
-      }
+      const res: ToolResponse = await chatWithAgent(userText, selectedGraph);
+      onBackendHealthy?.();
 
       setMessages((prev) => [
         ...prev,
