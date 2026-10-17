@@ -1,11 +1,11 @@
-# The M&A Chaos Resolver (OrgBridge AI) 🧠⚡
+# The M&A Chaos Resolver (OrgBridge AI)
 
 > **FalkorDB Hackathon (Track 03: Company Brain)**  
 > Turning M&A chaos into deterministic knowledge using FalkorDB's multigraph tenancy, bounded graph path traversals, SME influence ranking, and hybrid vector entity resolution.
 
 ---
 
-## 📌 Architecture & Phase 1 Highlights
+## Architecture & Phase 1 Highlights
 
 During an M&A (e.g., FinPay acquiring Vaultly), organizations face duplicate microservices, conflicting compliance policies, fractured org structures, and tribal knowledge silos. Flat vector RAG fails here because it cannot reason across tenants or evaluate graph paths.
 
@@ -17,7 +17,7 @@ OrgBridge AI leverages **FalkorDB** as the heart of the system across four core 
 
 ---
 
-## 🗂️ Project Structure
+## Project Structure
 
 ```
 chaos-resolver-folkordb/
@@ -73,7 +73,7 @@ chaos-resolver-folkordb/
 
 ---
 
-## 🧬 Graph Schema Specification
+## Graph Schema Specification
 
 ### Node Labels
 - `(:Person)`: `id`, `name`, `role`, `department`, `email`, `pagerank`, `company_origin`
@@ -104,7 +104,7 @@ chaos-resolver-folkordb/
 
 ---
 
-## 🛡️ Edge Cases Handled
+## Edge Cases Handled
 
 1. **Entity Collision (Same Name, Different Person/Service):**
    - Namespaced node IDs (`finpay:person:rahul_s` vs `vaultly:person:rahul_s`) and mandatory `company_origin` property prevent `MERGE` statements from collapsing distinct people or services.
@@ -119,7 +119,7 @@ chaos-resolver-folkordb/
 
 ---
 
-## 🚀 Quickstart & Seeding
+## Quickstart & Seeding
 
 ### 1. Install Dependencies
 ```bash
@@ -187,7 +187,7 @@ curl -X POST http://localhost:8000/api/chat -H "Content-Type: application/json" 
 python -m src.cli serve --port 8000
 ```
 Interactive Swagger API documentation will be available at:  
-👉 **http://localhost:8000/docs**
+- **http://localhost:8000/docs**
 
 ### 7. Launch Next.js "War Room" Dashboard (Phase 4)
 In a separate terminal, launch the split-screen interactive dashboard:
@@ -195,12 +195,12 @@ In a separate terminal, launch the split-screen interactive dashboard:
 npm run dev --prefix frontend
 ```
 Open your browser at:  
-👉 **http://localhost:3000**
+- **http://localhost:3000**
 
 Features:
-- **Tenant Selector Pill**: Switch live views between `FinPay (Isolated)`, `Vaultly (Isolated)`, and `Merged Brain 🧠`.
+- **Tenant Selector Pill**: Switch live views between `FinPay (Isolated)`, `Vaultly (Isolated)`, and `Merged Brain` (paired with an SVG Brain icon).
 - **Left Panel**: Autonomous Agent Chat with one-click M&A Crisis Prompts, source citations (Slack thread, RFC doc, Jira ticket), and active path triggers.
-- **Right Panel**: Interactive `react-force-graph-2d` live canvas color-coded by tenant (FinPay Blue, Vaultly Orange, Conflict Red, Redundancy Green).
+- **Right Panel**: Interactive `react-force-graph-2d` live canvas color-coded by company origin: FinPay (Blue), Vaultly (Orange), Unified Post-M&A (Emerald), Shared/External (Purple), with CONFLICTS_WITH (Red) and REDUNDANT_WITH (Green) edges.
 - **Active Subgraph Highlighting**: Automatically isolates, zooms, and pulses the exact nodes and relationships traversed when an agent question is answered.
 - **Node Inspector Drawer**: Click any node on the canvas to inspect its full properties, architecture domain, and tenant provenance.
 

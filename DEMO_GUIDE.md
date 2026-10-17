@@ -1,4 +1,4 @@
-# OrgBridge AI (The M&A Chaos Resolver) — Hackathon Demo Guide 🧠⚡
+# OrgBridge AI (The M&A Chaos Resolver) — Hackathon Demo Guide
 
 > **FalkorDB Hackathon (Track 03: Company Brain)**  
 > **Repository:** https://github.com/yashhh-23/chaos-resolver-folkordb  
@@ -8,7 +8,7 @@
 
 ---
 
-## 🎯 Executive Summary for Judges
+## Executive Summary for Judges
 
 When **FinPay** acquired **Vaultly**, engineering and architecture teams inherited massive organizational friction:
 - **Duplicate Microservices:** Both companies built separate authentication, KYC verification, and core ledger services (`FinPay-Core-Ledger` vs. `Vault-Engine`).
@@ -26,7 +26,7 @@ When **FinPay** acquired **Vaultly**, engineering and architecture teams inherit
 
 ---
 
-## 🎬 3-Minute Video Recording / Demo Walkthrough Script
+## 3-Minute Video Recording / Demo Walkthrough Script
 
 ### **0:00 – 0:30 | The Problem & Architecture (The War Room)**
 - **Visual:** Open the OrgBridge AI War Room Dashboard (`http://localhost:3000` or deployed Vercel link).
@@ -71,10 +71,10 @@ When **FinPay** acquired **Vaultly**, engineering and architecture teams inherit
 
 ---
 
-## 🚀 Live Cloud Deployment Verification
+## Live Cloud Deployment Verification
 
 ### 1. Backend (FastAPI on Render)
-- **Status:** 🟢 **LIVE & HEALTHY**
+- **Status:** **LIVE & HEALTHY**
 - **Endpoint:** `https://orgbridge-ai-backend.onrender.com/api/health`
 - **Verification Response:**
   ```json
@@ -100,15 +100,15 @@ To deploy the frontend to Vercel in 60 seconds:
 
 ---
 
-## 🏆 Track 03 Rubric Checklist
+## Track 03 Rubric Checklist
 
 | Hackathon Requirement | How OrgBridge AI Implements It |
 | :--- | :--- |
-| **Multitenant Knowledge Base** | Isolated `finpay_graph` and `vaultly_graph` + unified `merged_brain` in FalkorDB Cloud with dynamic UI Tenant Selector Pill. |
+| **Multitenant Knowledge Base** | Isolated `finpay_graph` and `vaultly_graph` + unified `merged_brain` in FalkorDB Cloud with dynamic UI Tenant Selector Pill (with inline SVG Brain icon). |
 | **Entity Resolution & Vector Indexing** | Dense 384-dim semantic embeddings with FalkorDB vector indexes (`System`, `Policy`, `Decision`, `Team`) combined with shared external dependency overlap (`ExternalAPI`). |
 | **Graph Algorithms & Agent Tools** | 6 Core Tools: Stored PageRank centrality & authorship lineage for SME discovery, bounded multi-hop path traversal (`[*1..4]`) with native `shortestPath` fallback for warm introductions, and Weakly Connected Components (WCC) for detecting disconnected organizational silos. |
 | **Autonomous Agent & Text-to-Cypher** | Groq Llama-3.3-70B agent with schema-constrained Cypher generation (`CALL db.labels()`, `CALL db.relationshipTypes()`, query sanitizer) via `/api/chat` and offline deterministic fallback. |
 | **Decision Lineage & Citations** | Clickable RFC documents, Jira tickets, and Slack postmortems tracing every policy back to ground truth. |
 | **Keeping Knowledge Current** | Real-time transactional Cypher `MERGE`/`SET` mutations updating graph state live without re-indexing. |
-| **Full-Stack War Room** | Interactive Next.js 14 split-screen with force-directed 2D canvas, pulsing active subgraphs, and node inspector. |
+| **Full-Stack War Room** | Interactive Next.js 14 split-screen with force-directed 2D canvas color-coded by entity provenance (FinPay Blue, Vaultly Orange, Unified Emerald, External Purple), pulsing active subgraphs, and node inspector. |
 
