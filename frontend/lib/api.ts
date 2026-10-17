@@ -52,6 +52,20 @@ async function fetchWithRetry(url: string, options: RequestInit, retries = 2, de
   throw lastError || new Error("Network request failed after retries");
 }
 
+async function extractErrorMessage(res: Response, fallbackPrefix: string): Promise<string> {
+  try {
+    const errBody = await res.json().catch(() => ({}));
+    if (typeof errBody.detail === "string") return errBody.detail;
+    if (Array.isArray(errBody.detail)) {
+      return errBody.detail.map((d: any) => d.msg || JSON.stringify(d)).join(", ");
+    }
+    if (errBody.message) return String(errBody.message);
+  } catch {
+    // ignore parse error
+  }
+  return res.statusText ? `${fallbackPrefix}: ${res.statusText}` : `${fallbackPrefix} (HTTP ${res.status})`;
+}
+
 export async function checkBackendHealth() {
   try {
     const res = await fetch(`${API_BASE}/api/health`, { cache: "no-store" });
@@ -65,7 +79,10 @@ export async function checkBackendHealth() {
 export async function fetchFullSubgraph(graphName?: string): Promise<SubgraphData> {
   const url = graphName ? `${API_BASE}/api/graph/subgraph?graph=${graphName}` : `${API_BASE}/api/graph/subgraph`;
   const res = await fetchWithRetry(url, { cache: "no-store" });
-  if (!res.ok) throw new Error(`Failed to load graph: ${res.statusText}`);
+  if (!res.ok) {
+    const errMsg = await extractErrorMessage(res, "Failed to load graph");
+    throw new Error(errMsg);
+  }
   return await res.json();
 }
 
@@ -75,7 +92,10 @@ export async function callTool(endpoint: string, payload?: Record<string, any>):
     headers: { "Content-Type": "application/json" },
     body: payload ? JSON.stringify(payload) : undefined,
   });
-  if (!res.ok) throw new Error(`Tool call failed: ${res.statusText}`);
+  if (!res.ok) {
+    const errMsg = await extractErrorMessage(res, "Tool call failed");
+    throw new Error(errMsg);
+  }
   return await res.json();
 }
 
@@ -94,7 +114,10 @@ export async function mutateGraph(
     headers: { "Content-Type": "application/json" },
     body: payload ? JSON.stringify(payload) : undefined,
   });
-  if (!res.ok) throw new Error(`Mutation failed: ${res.statusText}`);
+  if (!res.ok) {
+    const errMsg = await extractErrorMessage(res, "Mutation failed");
+    throw new Error(errMsg);
+  }
   return await res.json();
 }
 
@@ -104,7 +127,10 @@ export async function chatWithAgent(prompt: string, graph?: string): Promise<Too
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ prompt, graph }),
   });
-  if (!res.ok) throw new Error(`Agent chat failed: ${res.statusText}`);
+  if (!res.ok) {
+    const errMsg = await extractErrorMessage(res, "Agent chat failed");
+    throw new Error(errMsg);
+  }
   return await res.json();
 }
 
