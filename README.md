@@ -13,6 +13,7 @@
 - [Technology stack](#technology-stack)
 - [Repository layout](#repository-layout)
 - [Graph model](#graph-model)
+- [Cypher queries and graph algorithms](#cypher-queries-and-graph-algorithms)
 - [Getting started with Docker](#getting-started-with-docker)
 - [Local development without Docker](#local-development-without-docker)
 - [Environment variables](#environment-variables)
@@ -232,7 +233,128 @@ The schema supports the following relationship types. Their direction matters fo
 
 The merged graph adds cross-company relationships. The analysis tools use these edges as evidence; they do not replace human review for actual architecture, security, or regulatory decisions.
 
-## Getting started with Docker
+## Cypher queries and graph algorithms
+
+OrgBridge AI is built directly on FalkorDB's native Cypher engine and graph procedures. Below are the key Cypher queries and graph algorithms the product depends on:
+
+### 1. Vector Indexing & Semantic Search (`db.idx.vector`)
+Dense 384-dimensional embeddings are indexed and queried natively on FalkorDB:
+```cypher
+-- Vector Index Creation (System, Policy, Decision, Team)
+CREATE VECTOR INDEX FOR (s:System) ON (s.embedding) OPTIONS {dimension: 384, similarityFunction: 'cosine'};
+CREATE VECTOR INDEX FOR (p:Policy) ON (p.embedding) OPTIONS {dimension: 384, similarityFunction: 'cosine'};
+
+-- Vector Similarity Query (Nearest Neighbor Search)
+CALL db.idx.vector.queryNodes('System', 'embedding', $k, vecf32($vec))
+YIELD node, score
+RETURN node, score;
+```
+
+### 2. Graph Algorithms: Weakly Connected Components (`algo.wcc`)
+Discovers isolated organizational islands and multi-company integration clusters:
+```cypher
+-- FalkorDB Native WCC Graph Algorithm Procedure
+CALL algo.wcc()
+YIELD node, componentId
+RETURN node, componentId;
+```
+*(Includes a seamless Python BFS queue traversal fallback if native `algo.wcc` procedure is unavailable).*
+
+### 3. SME Expert Discovery via Influence Ranking & Multi-Hop Lineage
+Ranks personnel using stored GraphBLAS PageRank centrality combined with domain-specific artifact authorship, incident resolutions, and system ownership:
+```cypher
+MATCH (p:Person {company_origin: $company})
+OPTIONAL MATCH (p)-[:AUTHORED]->(doc:Document)
+OPTIONAL MATCH (p)-[:RESOLVED]->(tkt:Ticket)
+OPTIONAL MATCH (p)-[:OWNS]->(s:System)
+RETURN p.id, p.name, p.role, p.department, p.pagerank,
+       collect(DISTINCT doc.title) as authored_docs,
+       collect(DISTINCT tkt.title) as resolved_tickets,
+       collect(DISTINCT s.name) as owned_systems;
+```
+
+### 4. Warm Introduction Bounded Path Traversal (`shortestPath` / `[*1..4]`)
+Bridges engineers across merging entities by finding the shortest topological path through organizational ties, shared systems, or joint documentation:
+```cypher
+-- Native shortestPath with Hop Bounding
+MATCH (a:Person {id: $p_a_id}), (b:Person {id: $p_b_id})
+WITH shortestPath((a)-[*..5]-(b)) as p
+WHERE p IS NOT NULL
+RETURN [n in nodes(p) | n.id] as node_ids,
+       [n in nodes(p) | coalesce(n.name, n.id)] as node_names,
+       [r in relationships(p) | [startNode(r).id, endNode(r).id, type(r)]] as rel_triplets,
+       length(p) as hops;
+
+-- Bidirectional Bounded Path Fallback
+MATCH (a:Person {id: $p_a_id}), (b:Person {id: $p_b_id})
+MATCH p = (a)-[*1..4]-(b)
+RETURN p, length(p) as hops
+ORDER BY hops ASC
+LIMIT 1;
+```
+
+### 5. Decision & Policy Governance Lineage Tracing
+Traverses causal links from microservices to governing decisions, opposing decisions, and source RFC documents:
+```cypher
+MATCH (s:System {id: $sys_id})
+OPTIONAL MATCH (s)-[:GOVERNED_BY]->(d:Decision)
+OPTIONAL MATCH (d)-[r_conf:CONFLICTS_WITH]-(dc:Decision)
+OPTIONAL MATCH (d)-[:DERIVED_FROM]->(doc:Document)
+OPTIONAL MATCH (d)-[:DERIVED_FROM]->(tkt:Ticket)
+OPTIONAL MATCH (dc)-[:DERIVED_FROM]->(cdoc:Document)
+RETURN s.name, d.summary, d.status, type(r_conf), dc.summary, dc.status,
+       doc.title, doc.url, tkt.title, cdoc.title;
+```
+
+### 6. Redundant Microservices & Shared External Dependency Analysis
+Detects duplicate services across corporate boundaries and checks for shared third-party dependencies (e.g. UIDAI Aadhaar, AWS KMS, Stripe):
+```cypher
+MATCH (s1:System)-[r:REDUNDANT_WITH]-(s2:System)
+WHERE s1.company_origin <> s2.company_origin
+OPTIONAL MATCH (p1:Person)-[:OWNS]->(s1)
+OPTIONAL MATCH (p2:Person)-[:OWNS]->(s2)
+OPTIONAL MATCH (s1)-[:CALLS]->(ext:ExternalAPI)<-[:CALLS]-(s2)
+RETURN s1.name, s1.domain, s2.name, s2.domain, r.similarity, r.reason,
+       collect(DISTINCT ext.name) as shared_external_apis;
+```
+
+### 7. Real-Time Knowledge Mutations (Track 03 Cypher `MERGE` / `SET`)
+Dynamically updates knowledge state as architects resolve policy contradictions or merge teams:
+```cypher
+-- Deprecate Conflicting Policies in Real-Time
+MATCH (p1:Policy {id: 'finpay:pol:session_security'})-[r:CONFLICTS_WITH]->(p2:Policy {id: 'vaultly:pol:session_continuity'})
+SET p1.status = 'DEPRECATED',
+    p2.status = 'DEPRECATED',
+    r.status = 'RESOLVED',
+    r.resolved_at = $timestamp,
+    r.resolution_note = 'Superceded by Unified M&A Hybrid Session Standard';
+
+-- Create Unified Standard Node & Relink Governance Edges
+MERGE (pol:Policy {id: 'unified:pol:hybrid_session_auth'})
+ON CREATE SET
+    pol.name = 'Unified M&A Adaptive Session Policy',
+    pol.domain = 'Authentication',
+    pol.company_origin = 'Unified',
+    pol.status = 'ACTIVE',
+    pol.effective_date = $effective_date,
+    pol.description = $pol_desc;
+
+-- Relink Microservices from Deprecated Policies to the New Standard
+MATCH (s:System)-[g:GOVERNED_BY]->(p:Policy)
+WHERE p.id IN ['finpay:pol:session_security', 'vaultly:pol:session_continuity']
+DELETE g
+WITH s
+MATCH (new_pol:Policy {id: 'unified:pol:hybrid_session_auth'})
+MERGE (s)-[:GOVERNED_BY]->(new_pol);
+```
+
+### 8. Subgraph Visualization Prioritization Query
+Pulls visual neighborhoods into `react-force-graph-2d`, ensuring critical cross-company bridge relationships and their endpoints are always prioritized:
+```cypher
+MATCH (a)-[r:CONFLICTS_WITH|REDUNDANT_WITH|SUPERSEDES]->(b)
+RETURN a, r, b
+LIMIT $rel_limit;
+```
 
 Docker Compose starts FalkorDB, the FastAPI backend, and the Next.js frontend. Seeding is a separate step.
 
