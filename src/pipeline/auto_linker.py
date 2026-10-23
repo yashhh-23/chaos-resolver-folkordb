@@ -595,6 +595,237 @@ class AutoLinkerEngine:
         )
         return summary
 
+    def link_incremental_node(
+        self,
+        node_id: str,
+        label: str,
+        tenant_graph: str,
+    ) -> Dict[str, Any]:
+        """Performs real-time incremental linking for newly ingested node.
+
+        Embeds the node in tenant_graph, promotes sanitized representation to
+        merged_brain, and links with counterpart entities across companies.
+        """
+        source_graph = db_client.get_graph(tenant_graph)
+        merged_graph = db_client.get_graph(settings.graph_merged)
+
+        # 1. Fetch node properties from source graph
+        res = source_graph.query(f"MATCH (n:{label} {{id: $id}}) RETURN n", {"id": node_id})
+        if not res.result_set:
+            logger.warning(f"Incremental linking: node '{node_id}' not found in {tenant_graph}")
+            return {"node_id": node_id, "label": label, "status": "not_found", "links_created": []}
+
+        raw_node = res.result_set[0][0]
+        node_props = raw_node.properties if hasattr(raw_node, "properties") else (raw_node if isinstance(raw_node, dict) else {})
+        company_origin = node_props.get("company_origin")
+        if not company_origin:
+            if "finpay" in tenant_graph.lower() or "finpay" in node_id.lower():
+                company_origin = "FinPay"
+            elif "vaultly" in tenant_graph.lower() or "vaultly" in node_id.lower():
+                company_origin = "Vaultly"
+            else:
+                company_origin = "Unified"
+
+        target_company = "Vaultly" if company_origin == "FinPay" else "FinPay"
+        links_created = []
+        now_ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        from src.connectors.security_pipeline import scrub_untrusted_text
+        from src.schema.cypher_schema import build_parameterized_node_merge
+
+        # 2. Compute embedding
+        if label == "System":
+            name = node_props.get("name", "")
+            domain = node_props.get("domain", "")
+            tech = node_props.get("tech", "")
+            desc = node_props.get("description", "")
+            text = system_embedding_text(name, domain, tech, desc)
+            clean_text = scrub_untrusted_text(text)
+            vec = embedding_service.embed_text(clean_text)
+            try:
+                source_graph.query(
+                    "MATCH (s:System {id: $id}) SET s.embedding = vecf32($vec)",
+                    {"id": node_id, "vec": vec},
+                )
+            except Exception as e:
+                logger.debug(f"Could not store vector embedding in {tenant_graph}: {e}")
+
+            # Clean-room promotion to merged_brain: promote sanitized metadata
+            promoted_props = {
+                "id": node_id,
+                "name": name,
+                "domain": domain,
+                "tech": tech,
+                "tier": node_props.get("tier", "tier-1"),
+                "description": scrub_untrusted_text(desc),
+                "company_origin": company_origin,
+                "repo": node_props.get("repo", ""),
+                "external_id": node_props.get("external_id", ""),
+                "source_system": node_props.get("source_system", "github"),
+                "source_url": node_props.get("source_url", ""),
+                "acl_visibility": node_props.get("acl_visibility", "RESTRICTED"),
+                "sync_status": "SYNCED",
+            }
+            q_merge, p_merge = build_parameterized_node_merge("System", promoted_props)
+            merged_graph.query(q_merge, p_merge)
+            try:
+                merged_graph.query(
+                    "MATCH (s:System {id: $id}) SET s.embedding = vecf32($vec)",
+                    {"id": node_id, "vec": vec},
+                )
+            except Exception as e:
+                logger.debug(f"Could not store vector embedding in merged_brain: {e}")
+
+            # Copy external API calls to merged_brain
+            api_res = source_graph.query(
+                "MATCH (s:System {id: $id})-[:CALLS]->(ext:ExternalAPI) RETURN ext.id, ext.name, ext.category, ext.provider",
+                {"id": node_id},
+            )
+            my_apis = set()
+            for api_row in api_res.result_set:
+                ext_id, ext_name, ext_cat, ext_prov = api_row
+                my_apis.add(ext_name)
+                merged_graph.query(
+                    """
+                    MERGE (e:ExternalAPI {id: $id})
+                    ON CREATE SET e.name = $name, e.category = $cat, e.provider = $prov, e.company_origin = 'External'
+                    """,
+                    {"id": ext_id, "name": ext_name, "cat": ext_cat, "prov": ext_prov},
+                )
+                merged_graph.query(
+                    """
+                    MATCH (s:System {id: $s_id}), (e:ExternalAPI {id: $e_id})
+                    MERGE (s)-[:CALLS]->(e)
+                    """,
+                    {"s_id": node_id, "e_id": ext_id},
+                )
+
+            # Cross-company counterpart resolution in merged_brain
+            counterparts_res = merged_graph.query(
+                """
+                MATCH (s:System {company_origin: $target_company})
+                WHERE s.id <> $id
+                OPTIONAL MATCH (s)-[:CALLS]->(ext:ExternalAPI)
+                RETURN s.id, s.name, s.domain, s.description, s.tech, collect(ext.name) as ext_apis
+                """,
+                {"target_company": target_company, "id": node_id},
+            )
+
+            for c_row in counterparts_res.result_set:
+                c_id, c_name, c_domain, c_desc, c_tech, c_apis = c_row
+                c_apis_set = set(c_apis or [])
+                c_vec = embedding_service.embed_text(system_embedding_text(c_name, c_domain or "", c_tech or "", c_desc or ""))
+                cos_sim = embedding_service.cosine_similarity(vec, c_vec)
+
+                common_apis = my_apis.intersection(c_apis_set)
+                graph_bonus = settings.auto_linker_graph_bonus_per_api * len(common_apis)
+                domain_bonus = settings.auto_linker_domain_bonus if (domain and c_domain and domain.lower() == c_domain.lower()) else 0.0
+
+                combined = min(settings.auto_linker_max_score, round(cos_sim + graph_bonus + domain_bonus, 2))
+                eff_threshold = self.threshold
+
+                if combined >= eff_threshold:
+                    reason = f"Incremental System Overlap ({combined}): common APIs {list(common_apis)}"
+                    merged_graph.query(
+                        """
+                        MATCH (a:System {id: $src}), (b:System {id: $tgt})
+                        MERGE (a)-[r:REDUNDANT_WITH]->(b)
+                        ON CREATE SET r.similarity = $sim, r.reason = $reason, r.timestamp = $ts, r.incremental = true
+                        ON MATCH SET r.similarity = $sim, r.reason = $reason, r.timestamp = $ts, r.incremental = true
+                        """,
+                        {"src": node_id, "tgt": c_id, "sim": combined, "reason": reason, "ts": now_ts},
+                    )
+                    links_created.append({"type": "REDUNDANT_WITH", "source": node_id, "target": c_id, "score": combined})
+
+        elif label in ["Policy", "Decision"]:
+            name = node_props.get("name") or node_props.get("summary", "")
+            domain = node_props.get("domain", "")
+            desc = node_props.get("description") or node_props.get("summary", "")
+            clean_text = scrub_untrusted_text(f"{label}: {name} | Domain: {domain} | Description: {desc}")
+            vec = embedding_service.embed_text(clean_text)
+
+            try:
+                source_graph.query(
+                    f"MATCH (n:{label} {{id: $id}}) SET n.embedding = vecf32($vec)",
+                    {"id": node_id, "vec": vec},
+                )
+            except Exception as e:
+                logger.debug(f"Could not store vector embedding in {tenant_graph}: {e}")
+
+            # Clean-room promotion
+            promoted_props = {
+                "id": node_id,
+                "name": name if label == "Policy" else None,
+                "summary": name if label == "Decision" else None,
+                "domain": domain,
+                "description": scrub_untrusted_text(desc),
+                "authority_level": node_props.get("authority_level", "Architecture Committee"),
+                "status": node_props.get("status", "ACTIVE"),
+                "source": node_props.get("source", ""),
+                "company_origin": company_origin,
+                "acl_visibility": node_props.get("acl_visibility", "RESTRICTED"),
+                "sync_status": "SYNCED",
+            }
+            promoted_props = {k: v for k, v in promoted_props.items() if v is not None}
+            q_merge, p_merge = build_parameterized_node_merge(label, promoted_props)
+            merged_graph.query(q_merge, p_merge)
+            try:
+                merged_graph.query(
+                    f"MATCH (n:{label} {{id: $id}}) SET n.embedding = vecf32($vec)",
+                    {"id": node_id, "vec": vec},
+                )
+            except Exception as e:
+                logger.debug(f"Could not store vector embedding in merged_brain: {e}")
+
+            # Cross-company counterpart resolution in merged_brain
+            counterparts_res = merged_graph.query(
+                f"""
+                MATCH (n:{label} {{company_origin: $target_company}})
+                WHERE n.id <> $id
+                RETURN n.id, coalesce(n.name, n.summary), n.domain, coalesce(n.description, n.summary)
+                """,
+                {"target_company": target_company, "id": node_id},
+            )
+
+            for c_row in counterparts_res.result_set:
+                c_id, c_name, c_domain, c_desc = c_row
+                c_text = f"{label}: {c_name} | Domain: {c_domain} | Description: {c_desc}"
+                c_vec = embedding_service.embed_text(c_text)
+                sim = round(embedding_service.cosine_similarity(vec, c_vec), 2)
+
+                if sim >= self.threshold or (domain and c_domain and domain.lower() == c_domain.lower() and sim >= 0.70):
+                    reason = f"Incremental {label} Contradiction: {name} vs {c_name} in {domain or c_domain} (sim={sim})"
+                    merged_graph.query(
+                        f"""
+                        MATCH (a:{label} {{id: $src}}), (b:{label} {{id: $tgt}})
+                        MERGE (a)-[r:CONFLICTS_WITH]->(b)
+                        ON CREATE SET r.similarity = $sim, r.reason = $reason, r.domain = $domain, r.timestamp = $ts, r.incremental = true
+                        ON MATCH SET r.similarity = $sim, r.reason = $reason, r.domain = $domain, r.timestamp = $ts, r.incremental = true
+                        """,
+                        {"src": node_id, "tgt": c_id, "sim": sim, "reason": reason, "domain": domain or c_domain, "ts": now_ts},
+                    )
+                    links_created.append({"type": "CONFLICTS_WITH", "source": node_id, "target": c_id, "score": sim})
+
+        return {
+            "node_id": node_id,
+            "label": label,
+            "tenant_graph": tenant_graph,
+            "company_origin": company_origin,
+            "bridges_created": len(links_created),
+            "links": links_created,
+        }
+
+
+def link_incremental_node(
+    node_id: str,
+    label: str,
+    tenant_graph: str,
+    threshold: Optional[float] = None,
+) -> Dict[str, Any]:
+    """Module-level helper to trigger incremental hybrid entity linking."""
+    engine = AutoLinkerEngine(threshold=threshold)
+    return engine.link_incremental_node(node_id=node_id, label=label, tenant_graph=tenant_graph)
+
 
 auto_linker_engine = AutoLinkerEngine()
 

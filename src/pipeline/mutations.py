@@ -10,10 +10,227 @@ Executes transactional Cypher MERGE, SET, and DELETE operations in FalkorDB to:
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 import re
+import uuid
+import time
+import asyncio
+import concurrent.futures
 from src.config import settings
 from src.utils.logger import logger
 from src.db.client import db_client
 from src.tools.graph_tools import Subgraph
+from src.connectors import github_connector, jira_connector, slack_connector
+
+
+def _run_async(coro):
+    """Executes an async coroutine synchronously, handling running event loops safely."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop and loop.is_running():
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            return pool.submit(asyncio.run, coro).result()
+    else:
+        return asyncio.run(coro)
+
+
+class OutboxStateMachine:
+    """Manages transactional write-backs with state transitions (PENDING -> SYNCED | FAILED).
+
+    Coordinates:
+    1. GitHub: Opens deprecation PR on legacy microservice repository with reviewers.
+    2. Jira: Creates cross-company Migration Epic and links superseded tickets.
+    3. Slack: Dispatches Block Kit HITL approval card to M&A channel.
+    4. Outbox retry / compensation for transient failures.
+    5. Commits Slack approver ID and timestamp upon HITL sign-off.
+    """
+
+    def __init__(self, graph_name: str):
+        self.graph_name = graph_name
+
+    def _get_graph(self):
+        return db_client.get_graph(self.graph_name)
+
+    def create_and_dispatch(
+        self,
+        action: str,
+        target_entity_id: str,
+        details: Dict[str, Any],
+        requires_hitl_approval: bool = False,
+        simulate_failure: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        tx_id = f"tx_{int(time.time())}_{uuid.uuid4().hex[:6]}"
+        now_ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        graph = self._get_graph()
+
+        # Step 1: Initial Outbox record in FalkorDB
+        initial_status = "PENDING"
+        try:
+            graph.query(
+                """
+                MERGE (o:OutboxEvent {id: $tx_id})
+                ON CREATE SET o.action = $action,
+                              o.target_entity_id = $target_id,
+                              o.sync_status = $status,
+                              o.created_at = $ts,
+                              o.updated_at = $ts
+                """,
+                {"tx_id": tx_id, "action": action, "target_id": target_entity_id, "status": initial_status, "ts": now_ts},
+            )
+        except Exception as e:
+            logger.warning(f"Could not persist OutboxEvent node in {self.graph_name}: {e}")
+
+        # Step 2: Dispatch writebacks
+        writeback_results: Dict[str, Any] = {}
+        has_failure = False
+
+        # GitHub PR write-back
+        try:
+            if simulate_failure == "github":
+                raise ConnectionError("Simulated GitHub API timeout")
+            gh_res = _run_async(github_connector.execute_writeback(action, details))
+            gh_res["sync_status"] = "SYNCED"
+            writeback_results["github"] = gh_res
+        except Exception as e:
+            logger.error(f"Outbox GitHub write-back failed for {tx_id}: {e}")
+            has_failure = True
+            writeback_results["github"] = {"sync_status": "FAILED", "error": str(e)}
+
+        # Jira Migration Epic write-back
+        try:
+            if simulate_failure == "jira":
+                raise ConnectionError("Simulated Jira API timeout")
+            jira_res = _run_async(jira_connector.execute_writeback(action, details))
+            jira_res["sync_status"] = "SYNCED"
+            writeback_results["jira"] = jira_res
+        except Exception as e:
+            logger.error(f"Outbox Jira write-back failed for {tx_id}: {e}")
+            has_failure = True
+            writeback_results["jira"] = {"sync_status": "FAILED", "error": str(e)}
+
+        # Slack Block Kit HITL write-back
+        try:
+            if simulate_failure == "slack":
+                raise ConnectionError("Simulated Slack API timeout")
+            slack_res = _run_async(slack_connector.execute_writeback(action, details))
+            if requires_hitl_approval:
+                slack_res["sync_status"] = "PENDING"
+                slack_res["approval_status"] = "PENDING_APPROVAL"
+            else:
+                slack_res["sync_status"] = "SYNCED"
+            writeback_results["slack"] = slack_res
+        except Exception as e:
+            logger.error(f"Outbox Slack write-back failed for {tx_id}: {e}")
+            has_failure = True
+            writeback_results["slack"] = {"sync_status": "FAILED", "error": str(e)}
+
+        # Determine overall sync status
+        if has_failure:
+            overall_status = "FAILED"
+        elif requires_hitl_approval:
+            overall_status = "PENDING"
+        else:
+            overall_status = "SYNCED"
+
+        # Update OutboxEvent in FalkorDB
+        try:
+            graph.query(
+                """
+                MATCH (o:OutboxEvent {id: $tx_id})
+                SET o.sync_status = $status,
+                    o.updated_at = $ts,
+                    o.github_status = $gh_status,
+                    o.jira_status = $jira_status,
+                    o.slack_status = $slack_status
+                """,
+                {
+                    "tx_id": tx_id,
+                    "status": overall_status,
+                    "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "gh_status": writeback_results.get("github", {}).get("sync_status", "UNKNOWN"),
+                    "jira_status": writeback_results.get("jira", {}).get("sync_status", "UNKNOWN"),
+                    "slack_status": writeback_results.get("slack", {}).get("sync_status", "UNKNOWN"),
+                },
+            )
+        except Exception as e:
+            logger.warning(f"Could not update OutboxEvent node status: {e}")
+
+        return {
+            "tx_id": tx_id,
+            "action": action,
+            "target_entity_id": target_entity_id,
+            "sync_status": overall_status,
+            "requires_hitl_approval": requires_hitl_approval,
+            "writebacks": writeback_results,
+        }
+
+    def retry_outbox(
+        self,
+        tx_id: str,
+        action: str,
+        details: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Retries failed external writebacks and advances sync_status from FAILED to SYNCED."""
+        logger.info(f"Retrying Outbox writebacks for transaction {tx_id}")
+        return self.create_and_dispatch(
+            action=action,
+            target_entity_id=details.get("target_entity_id", "unified:pol:hybrid_session_auth"),
+            details=details,
+            requires_hitl_approval=False,
+            simulate_failure=None,
+        )
+
+    def approve_slack_resolution(
+        self,
+        tx_id: str,
+        target_policy_id: str,
+        approver_slack_id: str = "U_STAFF_LEAD_01",
+        approver_name: str = "Aarav Mehta (Staff SecArch)",
+    ) -> Dict[str, Any]:
+        """Applies HITL sign-off from Slack: commits approver's Slack ID and timestamp to unified node."""
+        graph = self._get_graph()
+        now_ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        update_query = """
+            MATCH (p:Policy {id: $pol_id})
+            SET p.approver_slack_id = $approver_id,
+                p.approver_name = $approver_name,
+                p.approved_at = $ts,
+                p.hitl_approval_status = 'APPROVED',
+                p.sync_status = 'SYNCED'
+            RETURN p.id, p.approver_slack_id, p.hitl_approval_status
+        """
+        graph.query(update_query, {
+            "pol_id": target_policy_id,
+            "approver_id": approver_slack_id,
+            "approver_name": approver_name,
+            "ts": now_ts,
+        })
+
+        try:
+            graph.query(
+                """
+                MATCH (o:OutboxEvent {id: $tx_id})
+                SET o.sync_status = 'SYNCED',
+                    o.slack_status = 'APPROVED',
+                    o.approver_slack_id = $approver_id,
+                    o.updated_at = $ts
+                """,
+                {"tx_id": tx_id, "approver_id": approver_slack_id, "ts": now_ts},
+            )
+        except Exception as e:
+            logger.warning(f"Could not update OutboxEvent for approval: {e}")
+
+        logger.info(f"Committed Slack HITL approval for {target_policy_id} by {approver_slack_id} ({now_ts})")
+        return {
+            "tx_id": tx_id,
+            "target_policy_id": target_policy_id,
+            "sync_status": "SYNCED",
+            "hitl_approval_status": "APPROVED",
+            "approver_slack_id": approver_slack_id,
+            "approved_at": now_ts,
+        }
 
 
 class LiveMutationEngine:
@@ -21,14 +238,41 @@ class LiveMutationEngine:
 
     def __init__(self, graph_name: str = None):
         self.graph_name = graph_name or settings.graph_merged
+        self.outbox = OutboxStateMachine(self.graph_name)
 
     def _get_graph(self):
         return db_client.get_graph(self.graph_name)
+
+    def approve_slack_resolution(
+        self,
+        tx_id: str,
+        target_policy_id: str,
+        approver_slack_id: str = "U_STAFF_LEAD_01",
+        approver_name: str = "Aarav Mehta (Staff SecArch)",
+    ) -> Dict[str, Any]:
+        """Approves a pending Slack Block Kit HITL mutation."""
+        return self.outbox.approve_slack_resolution(
+            tx_id=tx_id,
+            target_policy_id=target_policy_id,
+            approver_slack_id=approver_slack_id,
+            approver_name=approver_name,
+        )
+
+    def retry_outbox(
+        self,
+        tx_id: str,
+        action: str,
+        details: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Retries a failed Outbox transaction."""
+        return self.outbox.retry_outbox(tx_id=tx_id, action=action, details=details)
 
     def resolve_auth_conflict(
         self,
         compromise_ttl_minutes: int = 30,
         confirm_compliance_override: bool = False,
+        requires_hitl_approval: bool = False,
+        simulate_failure: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Resolves the critical authentication token conflict between FinPay (15-min)
         and Vaultly (7-day) by creating a unified hybrid M&A policy and updating lineage.
@@ -192,6 +436,23 @@ class LiveMutationEngine:
 
         logger.info(f"[{self.graph_name}] Live Mutation: Resolved Auth Token Conflict in FalkorDB ({compromise_ttl_minutes}m).")
 
+        # Step 5: Dispatch Outbox Transaction (GitHub PR, Jira Epic, Slack Approval Card)
+        outbox_res = self.outbox.create_and_dispatch(
+            action="resolve_auth_conflict",
+            target_entity_id="unified:pol:hybrid_session_auth",
+            details={
+                "policy_name": "Unified M&A Adaptive Session Policy",
+                "resolution_note": f"Adopt {compromise_ttl_minutes}-min JWT token lifetime with biometric refresh on mobile",
+                "repo": "gatekeeper-auth",
+                "reviewers": ["aarav-sec", "diya-identity"],
+                "legacy_tickets": ["FIN-1042", "VAULT-881"],
+                "impact": "High (Tier-1 Auth)",
+                "compromise_ttl": compromise_ttl_minutes,
+            },
+            requires_hitl_approval=requires_hitl_approval,
+            simulate_failure=simulate_failure,
+        )
+
         return {
             "action": "resolve_auth_conflict",
             "status": "success",
@@ -214,12 +475,15 @@ class LiveMutationEngine:
                 "Deprecated conflicting legacy policies and re-governed Gatekeeper-Auth and Pulse-Identity under the unified security standard."
             ),
             "subgraph": subgraph.model_dump(),
+            "outbox": outbox_res,
         }
 
     def resolve_retention_conflict(
         self,
         retention_days: int = 90,
         confirm_compliance_override: bool = False,
+        requires_hitl_approval: bool = False,
+        simulate_failure: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Resolves the data retention conflict between FinPay (30 days) and Vaultly (180 days)
         by creating a partitioned tiered audit standard.
@@ -367,6 +631,23 @@ class LiveMutationEngine:
 
         logger.info(f"[{self.graph_name}] Live Mutation: Resolved Data Retention Conflict in FalkorDB ({retention_days}d).")
 
+        # Step 5: Dispatch Outbox Transaction
+        outbox_res = self.outbox.create_and_dispatch(
+            action="resolve_retention_conflict",
+            target_entity_id=pol_id,
+            details={
+                "policy_name": f"Unified M&A Tiered Log & Audit Retention ({retention_days}d)",
+                "resolution_note": f"Standardize on {retention_days}-day tiered retention with Glacier cold archive",
+                "repo": "finpay-mesh-gateway",
+                "reviewers": ["priya-audit", "rohan-compliance"],
+                "legacy_tickets": ["FIN-802", "VAULT-419"],
+                "impact": "High (Data Retention & Compliance)",
+                "retention_days": retention_days,
+            },
+            requires_hitl_approval=requires_hitl_approval,
+            simulate_failure=simulate_failure,
+        )
+
         return {
             "action": "resolve_retention_conflict",
             "status": "success",
@@ -390,6 +671,7 @@ class LiveMutationEngine:
                 "Deprecated conflicting retention policies and unified platform audit logging across both organizations."
             ),
             "subgraph": subgraph.model_dump(),
+            "outbox": outbox_res,
         }
 
     def merge_teams(
@@ -397,6 +679,8 @@ class LiveMutationEngine:
         team_a_id: str = "finpay:team:secarch",
         team_b_id: str = "vaultly:team:identity_growth",
         unified_name: str = "Unified M&A Security & Identity Team",
+        requires_hitl_approval: bool = False,
+        simulate_failure: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Merges two distinct departmental teams into a unified joint team in FalkorDB with full history preservation."""
         if not team_a_id or not team_b_id:
@@ -612,6 +896,22 @@ class LiveMutationEngine:
             f"into {unified_id} ({len(found_members)} members, {len(found_systems)} systems, history preserved)."
         )
 
+        # Step 4: Dispatch Outbox Transaction
+        outbox_res = self.outbox.create_and_dispatch(
+            action="merge_teams",
+            target_entity_id=unified_id,
+            details={
+                "policy_name": f"Team Consolidation: {unified_name}",
+                "resolution_note": f"Consolidate {found_teams[t1_clean]['name']} and {found_teams[t2_clean]['name']}",
+                "repo": "org-governance",
+                "reviewers": ["aarav-sec", "diya-identity"],
+                "legacy_tickets": ["FIN-TEAM-1", "VAULT-TEAM-2"],
+                "impact": "Medium (Organizational Topology)",
+            },
+            requires_hitl_approval=requires_hitl_approval,
+            simulate_failure=simulate_failure,
+        )
+
         return {
             "action": "merge_teams",
             "status": "success",
@@ -629,6 +929,7 @@ class LiveMutationEngine:
                 f"and {len(found_systems)} system(s) with full historical provenance preserved in FalkorDB."
             ),
             "subgraph": subgraph.model_dump(),
+            "outbox": outbox_res,
         }
 
     def reset_demo(self, include_subgraph: bool = True) -> Dict[str, Any]:

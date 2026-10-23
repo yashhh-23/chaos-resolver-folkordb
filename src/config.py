@@ -47,6 +47,28 @@ class Settings(BaseSettings):
         "http://127.0.0.1:3000"
     )
 
+    # Connector & Webhook Configuration (GitHub, Jira, Slack)
+    connector_master_key: str = "s77C3wTrHJNJyyS2CHUPqwQ96rdN77qgXjWgonqBdCI="
+    github_app_id: Optional[str] = None
+    github_private_key: Optional[str] = None
+    github_webhook_secret: str = "finpay-vaultly-github-webhook-secret"
+    jira_client_id: Optional[str] = None
+    jira_client_secret: Optional[str] = None
+    jira_webhook_secret: str = "jira-webhook-secret-token"
+    jira_redirect_uri: str = "http://localhost:8000/api/connectors/jira/callback"
+    slack_signing_secret: str = "slack-signing-secret-token"
+    slack_bot_token: Optional[str] = None
+    tenant_org_mappings: dict = {
+        "finpay-org": "finpay_graph",
+        "vaultly-io": "vaultly_graph",
+    }
+    bot_user_ids: list = [
+        "orgbridge-bot",
+        "U_ORGBRIDGE_BOT",
+        "bot@orgbridge.ai",
+        "app/orgbridge",
+    ]
+
     # General
     environment: str = "development"
     log_level: str = "INFO"
@@ -58,6 +80,16 @@ class Settings(BaseSettings):
         "falkordb_password",
         "api_key",
         "admin_api_key",
+        "connector_master_key",
+        "github_app_id",
+        "github_private_key",
+        "github_webhook_secret",
+        "jira_client_id",
+        "jira_client_secret",
+        "jira_webhook_secret",
+        "jira_redirect_uri",
+        "slack_signing_secret",
+        "slack_bot_token",
         mode="before",
     )
     @classmethod

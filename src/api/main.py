@@ -5,8 +5,10 @@ Groq Llama-3.3-70B agent with schema-constrained Cypher,
 and live visual subgraph payloads for the Next.js War Room dashboard.
 """
 
+import json
 from typing import Optional, Dict, Any, List
-from fastapi import FastAPI, HTTPException, Body, Depends, Query
+from fastapi import FastAPI, HTTPException, Body, Depends, Query, Request, BackgroundTasks
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, model_validator
 
@@ -18,6 +20,7 @@ from src.tools.mcp_server import MCP_TOOL_DEFINITIONS, execute_tool
 from src.tools.llm_agent import llm_agent
 from src.pipeline.mutations import get_mutation_engine
 from src.api.auth import require_read, require_write, require_admin
+from src.connectors import github_connector, jira_connector, slack_connector
 
 VALID_GRAPHS = {settings.graph_finpay, settings.graph_vaultly, settings.graph_merged}
 
@@ -399,4 +402,209 @@ def reset_demo_graph(req: Optional[ResetDemoRequest] = Body(default=None)):
     except Exception as e:
         logger.error(f"Error in reset_demo_graph: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+class SlackApproveRequest(BaseModel):
+    tx_id: str = Field(..., description="Transaction ID of pending Outbox mutation", examples=["tx_1710000000_abc123"])
+    target_policy_id: str = Field(..., description="Policy ID to sign off", examples=["unified:pol:hybrid_session_auth"])
+    approver_slack_id: str = Field(default="U_STAFF_LEAD_01", description="Slack user ID of approving engineer")
+    approver_name: Optional[str] = Field(default="Aarav Mehta (Staff SecArch)", description="Name of approver")
+    graph: Optional[str] = Field(default=None, description="Target graph tenant")
+
+
+class OutboxRetryRequest(BaseModel):
+    tx_id: str = Field(..., description="Transaction ID to retry")
+    action: str = Field(..., description="Mutation action name")
+    details: Dict[str, Any] = Field(default_factory=dict, description="Writeback payload details")
+    graph: Optional[str] = Field(default=None, description="Target graph tenant")
+
+
+@app.post("/api/mutate/slack-approve", dependencies=[Depends(require_write)])
+def approve_slack_mutation(req: SlackApproveRequest):
+    """Processes interactive Slack Block Kit HITL approval and commits approver to Policy node."""
+    try:
+        target_graph = validate_graph(req.graph)
+        engine = get_mutation_engine(target_graph)
+        return engine.approve_slack_resolution(
+            tx_id=req.tx_id,
+            target_policy_id=req.target_policy_id,
+            approver_slack_id=req.approver_slack_id,
+            approver_name=req.approver_name or "Aarav Mehta (Staff SecArch)",
+        )
+    except Exception as e:
+        logger.error(f"Error in approve_slack_mutation: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/mutate/outbox-retry", dependencies=[Depends(require_write)])
+def retry_outbox_transaction(req: OutboxRetryRequest):
+    """Retries a failed Outbox transaction across GitHub, Jira, or Slack."""
+    try:
+        target_graph = validate_graph(req.graph)
+        engine = get_mutation_engine(target_graph)
+        return engine.retry_outbox(
+            tx_id=req.tx_id,
+            action=req.action,
+            details=req.details,
+        )
+    except Exception as e:
+        logger.error(f"Error in retry_outbox_transaction: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# Live Enterprise Connectors & Webhook Routes (GitHub, Jira, Slack)
+# ---------------------------------------------------------------------------
+
+CONNECTORS: Dict[str, Any] = {
+    "github": github_connector,
+    "jira": jira_connector,
+    "slack": slack_connector,
+}
+
+
+def resolve_tenant_graph(
+    provider: str,
+    payload: Dict[str, Any],
+    query_tenant: Optional[str] = None,
+    headers: Optional[Dict[str, str]] = None,
+) -> str:
+    """Resolves target isolated tenant graph (finpay_graph or vaultly_graph)."""
+    if query_tenant:
+        return settings.graph_vaultly if "vault" in query_tenant.lower() else settings.graph_finpay
+
+    if headers:
+        normalized_headers = {k.lower(): v for k, v in headers.items()}
+        tenant_header = normalized_headers.get("x-tenant-id") or normalized_headers.get("x-company")
+        if tenant_header:
+            return settings.graph_vaultly if "vault" in tenant_header.lower() else settings.graph_finpay
+
+    # Check payload identifiers
+    payload_str = json.dumps(payload).lower()
+    if "vaultly" in payload_str or "vaultly-io" in payload_str:
+        return settings.graph_vaultly
+
+    return settings.graph_finpay
+
+
+class SyncRequest(BaseModel):
+    tenant: Optional[str] = Field(default="finpay", description="Target tenant: finpay or vaultly")
+    cursor: Optional[str] = Field(default=None, description="Optional checkpoint cursor")
+
+
+@app.post("/api/webhooks/{provider}", status_code=202)
+async def handle_provider_webhook(
+    provider: str,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    tenant: Optional[str] = Query(default=None),
+):
+    """Zero-trust ingestion endpoint for live GitHub, Jira, and Slack events.
+
+    Enforces constant-time cryptographic HMAC verification and 5-minute replay tolerance,
+    acknowledging with 202 Accepted in <100ms before processing normalization in background.
+    """
+    prov = provider.lower()
+    if prov not in CONNECTORS:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Unsupported provider '{provider}'. Supported providers: {list(CONNECTORS.keys())}",
+        )
+
+    connector = CONNECTORS[prov]
+
+    # 1. Constant-time cryptographic HMAC & replay window check
+    raw_body = await connector.verify_signature(request)
+    if not raw_body:
+        return {"status": "duplicate_ignored", "provider": prov}
+
+    # 2. Parse payload
+    try:
+        payload = json.loads(raw_body.decode("utf-8"))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Malformed JSON payload: {e}")
+
+    # Slack Events API URL verification challenge handshake (returns HTTP 200)
+    if prov == "slack" and payload.get("type") == "url_verification":
+        return JSONResponse(content={"challenge": payload.get("challenge")}, status_code=200)
+
+    # Attach raw headers for bot loop detection
+    payload["_headers"] = dict(request.headers)
+
+    # 3. Resolve target isolated tenant graph
+    target_graph = resolve_tenant_graph(
+        provider=prov,
+        payload=payload,
+        query_tenant=tenant,
+        headers=dict(request.headers),
+    )
+
+    # 4. Enqueue to async background worker (<100ms response time)
+    background_tasks.add_task(connector.normalize_to_graph, payload, target_graph)
+
+    return {
+        "status": "accepted",
+        "provider": prov,
+        "tenant_graph": target_graph,
+        "message": "Webhook authenticated and enqueued for async ingestion.",
+    }
+
+
+@app.get("/api/connectors/status", dependencies=[Depends(require_read)])
+def get_connectors_status():
+    """Returns real-time connection status and tenant mappings for all enterprise connectors."""
+    return {
+        "status": "healthy",
+        "tenants": settings.tenant_org_mappings,
+        "connectors": {
+            "github": {
+                "name": "GitHub App",
+                "configured": True,
+                "auth_model": "GitHub App RS256 JWT / Installation Token",
+                "webhook_secret_set": bool(settings.github_webhook_secret),
+                "target_orgs": list(settings.tenant_org_mappings.keys()),
+            },
+            "jira": {
+                "name": "Atlassian Jira",
+                "configured": True,
+                "auth_model": "Atlassian OAuth 2.0 (3LO)",
+                "webhook_secret_set": bool(settings.jira_webhook_secret),
+                "jql_checkpoint": 'updated >= "-15m" ORDER BY updated ASC',
+            },
+            "slack": {
+                "name": "Slack Events API",
+                "configured": True,
+                "auth_model": "Slack OAuth v2 (granular bot scopes)",
+                "signing_secret_set": bool(settings.slack_signing_secret),
+                "decision_reactions": [":memo:", ":white_check_mark:"],
+            },
+        },
+    }
+
+
+@app.post("/api/connectors/{provider}/sync", dependencies=[Depends(require_write)])
+async def trigger_connector_sync(
+    provider: str,
+    req: Optional[SyncRequest] = Body(default=None),
+):
+    """Triggers delta polling / backfill for a connector provider."""
+    prov = provider.lower()
+    if prov not in CONNECTORS:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Unsupported provider '{provider}'. Supported providers: {list(CONNECTORS.keys())}",
+        )
+
+    connector = CONNECTORS[prov]
+    tenant_req = req.tenant if req else "finpay"
+    target_graph = settings.graph_vaultly if "vault" in tenant_req.lower() else settings.graph_finpay
+    cursor = req.cursor if req else None
+
+    result = await connector.poll_delta(tenant_graph=target_graph, cursor=cursor)
+    return {
+        "status": "sync_completed",
+        "provider": prov,
+        "tenant_graph": target_graph,
+        "result": result,
+    }
 

@@ -605,9 +605,10 @@ class LLMAgent:
         )
 
         tools = self._get_tools_spec()
+        safe_user_content = f"<untrusted_external_data>\n{user_prompt}\n</untrusted_external_data>"
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
+            {"role": "user", "content": safe_user_content},
         ]
 
         try:
@@ -629,6 +630,21 @@ class LLMAgent:
                 fn_args = json.loads(tool_call.function.arguments or "{}")
 
                 logger.info(f"LLM Agent called tool '{fn_name}' with args {fn_args}")
+
+                # Zero-Trust Guard: Block any attempted call to mutating endpoints
+                prohibited_mutating_tools = {
+                    "resolve_auth_conflict", "resolve_retention_conflict", "merge_teams",
+                    "delete_node", "create_node", "update_policy", "execute_mutation",
+                }
+                if fn_name in prohibited_mutating_tools or "mutate" in fn_name.lower() or "delete" in fn_name.lower():
+                    logger.warning(f"Blocked unauthorized LLM attempt to invoke mutating tool: {fn_name}")
+                    return ToolResult(
+                        tool_name="security_guard",
+                        status="forbidden",
+                        text_answer="LLM agent is restricted to read-only tools and cannot directly invoke mutating operations.",
+                        details={"blocked_tool": fn_name},
+                        subgraph=Subgraph(),
+                    )
 
                 if fn_name == "run_schema_constrained_cypher":
                     return self._execute_cypher(

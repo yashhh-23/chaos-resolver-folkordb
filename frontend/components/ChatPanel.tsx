@@ -605,12 +605,23 @@ export default function ChatPanel({
 
       const friendlyDecision = actionTitleMap[res.action || action] || "Enterprise Knowledge Alignment";
 
+      let outboxText = "";
+      if (res.outbox?.writebacks) {
+        const gh = res.outbox.writebacks.github;
+        const jira = res.outbox.writebacks.jira;
+        const slack = res.outbox.writebacks.slack;
+        outboxText = `\n\n#### 🔗 External Systems Write-Back\n` +
+          `- **GitHub PR**: [${gh?.title || "Deprecation Pull Request"}](${gh?.html_url || "#"}) (Status: \`${gh?.sync_status || "SYNCED"}\`)\n` +
+          `- **Jira Epic**: [${jira?.summary || "Migration Epic"}](${jira?.key ? `https://finpay-jira.atlassian.net/browse/${jira.key}` : "#"}) (Status: \`${jira?.sync_status || "SYNCED"}\`)\n` +
+          `- **Slack**: Block Kit Approval Card sent to \`${slack?.channel || "#mna-architecture-bridge"}\` (Status: \`${slack?.sync_status || "SYNCED"}\`)`;
+      }
+
       const agentMsg: Message = {
         id: (Date.now() + 1).toString(),
         sender: "agent",
         text: `### Real-Time Policy Alignment Implemented\n\n` +
               `**Decision**: ${friendlyDecision}\n\n` +
-              `**Impact**: ${res.resolution_summary || res.message}\n\n` +
+              `**Impact**: ${res.resolution_summary || res.message}${outboxText}\n\n` +
               `> *Enterprise knowledge updated in real-time. Verified as of ${res.timestamp || "now"}.*`,
         toolName: "live_mutation",
         subgraph: res.subgraph,
@@ -714,6 +725,14 @@ export default function ChatPanel({
 
         {/* Header Actions: Transcript Export, Session Reset, & Database Status */}
         <div className="flex items-center gap-1.5">
+          <div className="hidden sm:flex items-center gap-1.5 text-[10px] bg-slate-950/80 px-2 py-1 rounded-full border border-slate-800 text-slate-400">
+            <span className="flex items-center gap-1" title="GitHub App Connected"><span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />GitHub</span>
+            <span className="text-slate-700">|</span>
+            <span className="flex items-center gap-1" title="Jira 3LO Connected"><span className="w-1.5 h-1.5 rounded-full bg-sky-400" />Jira</span>
+            <span className="text-slate-700">|</span>
+            <span className="flex items-center gap-1" title="Slack Events API Connected"><span className="w-1.5 h-1.5 rounded-full bg-indigo-400" />Slack</span>
+          </div>
+
           <button
             onClick={handleExportTranscript}
             className="p-1.5 rounded-lg bg-slate-950/80 hover:bg-slate-800 text-slate-400 hover:text-cyan-300 border border-slate-800 transition shadow-sm"

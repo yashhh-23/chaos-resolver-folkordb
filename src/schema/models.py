@@ -24,9 +24,15 @@ class TicketSeverity(str, Enum):
 
 
 class NodeBase(BaseModel):
-    """Base model enforcing namespaced ID and company provenance."""
+    """Base model enforcing namespaced ID, company provenance, and connector sync metadata."""
     id: str = Field(..., description="Globally unique namespaced identifier (e.g. finpay:person:aarav)")
     company_origin: CompanyOrigin = Field(..., description="Tenant origin of the entity")
+    external_id: Optional[str] = Field(default=None, description="External provider identifier (e.g. FIN-1042, PR #12)")
+    source_system: Optional[str] = Field(default=None, description="Source provider (github, jira, slack, manual)")
+    source_url: Optional[str] = Field(default=None, description="Deep link URL into provider system")
+    acl_visibility: Optional[str] = Field(default="RESTRICTED", description="Access control visibility (INTERNAL_TENANT, RESTRICTED, PUBLIC)")
+    content_hash: Optional[str] = Field(default=None, description="SHA256 content hash for change detection")
+    sync_status: Optional[str] = Field(default="SYNCED", description="Sync status: PENDING, SYNCED, FAILED, TOMBSTONED")
 
 
 class Person(NodeBase):

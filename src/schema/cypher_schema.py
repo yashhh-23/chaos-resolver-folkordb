@@ -40,6 +40,9 @@ INDEX_QUERIES: List[str] = [
     "CREATE INDEX FOR (tk:Ticket) ON (tk.id)",
     "CREATE INDEX FOR (d:Decision) ON (d.id)",
     "CREATE INDEX FOR (pol:Policy) ON (pol.id)",
+    "CREATE INDEX FOR (s:System) ON (s.external_id)",
+    "CREATE INDEX FOR (tk:Ticket) ON (tk.external_id)",
+    "CREATE INDEX FOR (p:Person) ON (p.email)",
 ]
 
 
@@ -424,3 +427,179 @@ def build_relationship_merge_cypher(
         f"MATCH (a{src_label_str} {{id: '{src_escaped}'}}), (b{tgt_label_str} {{id: '{tgt_escaped}'}}) "
         f"MERGE (a)-[r:{rel_type}]->(b){prop_assigns}{return_clause}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Safe Parameterized FalkorDB Upsert Cypher ($params immune to injection)
+# ---------------------------------------------------------------------------
+
+UPSERT_TICKET_CYPHER = """
+MERGE (t:Ticket {id: $node_id})
+ON CREATE SET t.external_id = $ext_id, t.title = $title, t.ticket_type = $ticket_type,
+              t.severity = $severity, t.status = $status, t.company_origin = $tenant,
+              t.source_system = $source_system, t.source_url = $source_url,
+              t.acl_visibility = $acl, t.content_hash = $content_hash, t.sync_status = 'SYNCED'
+ON MATCH SET t.title = $title, t.ticket_type = $ticket_type, t.severity = $severity,
+             t.status = $status, t.source_url = $source_url, t.acl_visibility = $acl,
+             t.content_hash = $content_hash, t.sync_status = 'SYNCED'
+"""
+
+UPSERT_SYSTEM_CYPHER = """
+MERGE (s:System {id: $node_id})
+ON CREATE SET s.name = $name, s.tech = $tech, s.domain = $domain,
+              s.description = $description, s.tier = $tier, s.repo = $repo,
+              s.company_origin = $tenant, s.source_system = $source_system,
+              s.source_url = $source_url, s.acl_visibility = $acl,
+              s.content_hash = $content_hash, s.sync_status = 'SYNCED'
+ON MATCH SET s.name = $name, s.tech = $tech, s.domain = $domain,
+             s.description = $description, s.tier = $tier, s.repo = $repo,
+             s.source_url = $source_url, s.acl_visibility = $acl,
+             s.content_hash = $content_hash, s.sync_status = 'SYNCED'
+"""
+
+UPSERT_PERSON_CYPHER = """
+MERGE (p:Person {id: $node_id})
+ON CREATE SET p.name = $name, p.role = $role, p.department = $department,
+              p.email = $email, p.pagerank = $pagerank, p.company_origin = $tenant,
+              p.source_system = $source_system, p.source_url = $source_url,
+              p.acl_visibility = $acl, p.sync_status = 'SYNCED'
+ON MATCH SET p.name = $name, p.role = $role, p.department = $department,
+             p.email = $email, p.source_url = $source_url,
+             p.acl_visibility = $acl, p.sync_status = 'SYNCED'
+"""
+
+UPSERT_DECISION_CYPHER = """
+MERGE (d:Decision {id: $node_id})
+ON CREATE SET d.summary = $summary, d.date = $date, d.effective_date = $effective_date,
+              d.authority_level = $authority_level, d.status = $status,
+              d.source = $source, d.company_origin = $tenant,
+              d.source_system = $source_system, d.source_url = $source_url,
+              d.acl_visibility = $acl, d.content_hash = $content_hash, d.sync_status = 'SYNCED'
+ON MATCH SET d.summary = $summary, d.date = $date, d.effective_date = $effective_date,
+             d.authority_level = $authority_level, d.source = $source,
+             d.source_url = $source_url, d.acl_visibility = $acl,
+             d.content_hash = $content_hash, d.sync_status = 'SYNCED'
+"""
+
+UPSERT_POLICY_CYPHER = """
+MERGE (p:Policy {id: $node_id})
+ON CREATE SET p.name = $name, p.domain = $domain, p.description = $description,
+              p.effective_date = $effective_date, p.authority_level = $authority_level,
+              p.status = $status, p.source = $source, p.company_origin = $tenant,
+              p.source_system = $source_system, p.source_url = $source_url,
+              p.acl_visibility = $acl, p.content_hash = $content_hash, p.sync_status = 'SYNCED'
+ON MATCH SET p.name = $name, p.domain = $domain, p.description = $description,
+             p.effective_date = $effective_date, p.authority_level = $authority_level,
+             p.source = $source, p.source_url = $source_url, p.acl_visibility = $acl,
+             p.content_hash = $content_hash, p.sync_status = 'SYNCED'
+"""
+
+UPSERT_DOCUMENT_CYPHER = """
+MERGE (doc:Document {id: $node_id})
+ON CREATE SET doc.title = $title, doc.doc_type = $doc_type, doc.url = $url,
+              doc.excerpt = $excerpt, doc.author_id = $author_id,
+              doc.company_origin = $tenant, doc.source_system = $source_system,
+              doc.source_url = $source_url, doc.acl_visibility = $acl,
+              doc.content_hash = $content_hash, doc.sync_status = 'SYNCED'
+ON MATCH SET doc.title = $title, doc.doc_type = $doc_type, doc.url = $url,
+             doc.excerpt = $excerpt, doc.author_id = $author_id,
+             doc.source_url = $source_url, doc.acl_visibility = $acl,
+             doc.content_hash = $content_hash, doc.sync_status = 'SYNCED'
+"""
+
+UPSERT_TEAM_CYPHER = """
+MERGE (t:Team {id: $node_id})
+ON CREATE SET t.name = $name, t.charter = $charter, t.company_origin = $tenant,
+              t.source_system = $source_system, t.source_url = $source_url,
+              t.acl_visibility = $acl, t.sync_status = 'SYNCED'
+ON MATCH SET t.name = $name, t.charter = $charter, t.source_url = $source_url,
+             t.acl_visibility = $acl, t.sync_status = 'SYNCED'
+"""
+
+TOMBSTONE_NODE_CYPHER = """
+MATCH (n {id: $node_id})
+SET n.sync_status = 'TOMBSTONED',
+    n.status = 'TOMBSTONED',
+    n.title = '[TOMBSTONED]',
+    n.name = '[TOMBSTONED]',
+    n.description = '[TOMBSTONED]',
+    n.excerpt = '[TOMBSTONED]',
+    n.embedding = null
+RETURN count(n) as tombstoned_count
+"""
+
+
+def build_parameterized_node_merge(
+    label: str,
+    properties: Dict[str, Any],
+    preserve_runtime_state: bool = True,
+) -> Tuple[str, Dict[str, Any]]:
+    """Builds a safe parameterized MERGE Cypher statement ($props) immune to injection."""
+    if label not in ALLOWED_LABELS:
+        raise ValueError(f"Label '{label}' is not in allowed schema labels: {ALLOWED_LABELS}")
+
+    node_id = properties.get("id")
+    if not node_id:
+        raise ValueError("Property 'id' is required for node merge.")
+
+    # Safe parameterized query with $props map
+    if not preserve_runtime_state:
+        query = f"MERGE (n:{label} {{id: $node_id}}) ON CREATE SET n = $props ON MATCH SET n = $props"
+        return query, {"node_id": node_id, "props": properties}
+
+    if "status" in properties:
+        seed_status = properties["status"]
+        query = (
+            f"MERGE (n:{label} {{id: $node_id}}) "
+            f"ON CREATE SET n = $props "
+            f"ON MATCH SET n += $props, "
+            f"n.status = CASE WHEN n.status IN ['DEPRECATED', 'MERGED', 'RESOLVED'] THEN n.status ELSE $seed_status END"
+        )
+        return query, {"node_id": node_id, "props": properties, "seed_status": seed_status}
+
+    query = f"MERGE (n:{label} {{id: $node_id}}) ON CREATE SET n = $props ON MATCH SET n += $props"
+    return query, {"node_id": node_id, "props": properties}
+
+
+def build_parameterized_relationship_merge(
+    source_id: str,
+    target_id: str,
+    rel_type: str,
+    properties: Optional[Dict[str, Any]] = None,
+    source_label: Optional[str] = None,
+    target_label: Optional[str] = None,
+    verify_endpoints: bool = True,
+) -> Tuple[str, Dict[str, Any]]:
+    """Builds a safe parameterized relationship MERGE ($props) immune to injection."""
+    if rel_type not in ALLOWED_RELATIONSHIPS:
+        raise ValueError(f"Relationship '{rel_type}' not in allowed relationships: {ALLOWED_RELATIONSHIPS}")
+
+    resolved_src_label = source_label or infer_label_from_id(source_id)
+    if not resolved_src_label and rel_type in RELATIONSHIP_DEFAULT_LABELS:
+        resolved_src_label = RELATIONSHIP_DEFAULT_LABELS[rel_type][0]
+
+    resolved_tgt_label = target_label or infer_label_from_id(target_id)
+    if not resolved_tgt_label and rel_type in RELATIONSHIP_DEFAULT_LABELS:
+        resolved_tgt_label = RELATIONSHIP_DEFAULT_LABELS[rel_type][1]
+
+    src_label_str = f":{resolved_src_label}" if resolved_src_label else ""
+    tgt_label_str = f":{resolved_tgt_label}" if resolved_tgt_label else ""
+
+    params: Dict[str, Any] = {
+        "src_id": source_id,
+        "tgt_id": target_id,
+    }
+
+    prop_clause = ""
+    if properties:
+        prop_clause = " ON CREATE SET r += $props ON MATCH SET r += $props"
+        params["props"] = properties
+
+    return_clause = " RETURN count(r) as created_count" if verify_endpoints else ""
+
+    query = (
+        f"MATCH (a{src_label_str} {{id: $src_id}}), (b{tgt_label_str} {{id: $tgt_id}}) "
+        f"MERGE (a)-[r:{rel_type}]->(b){prop_clause}{return_clause}"
+    )
+    return query, params
+

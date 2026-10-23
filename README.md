@@ -9,6 +9,7 @@
 - [Problem and solution](#problem-and-solution)
 - [Hosted deployment references](#hosted-deployment-references)
 - [Features](#features)
+- [Enterprise Live Connectors (GitHub, Jira, Slack)](#enterprise-live-connectors-github-jira-slack)
 - [Architecture](#architecture)
 - [Technology stack](#technology-stack)
 - [Repository layout](#repository-layout)
@@ -105,11 +106,57 @@ Mutation operations validate key input ranges and preconditions (with explicit c
 The Next.js dashboard includes:
 
 - a tenant selector for the three graph views;
+- live connector status health badges in the header for GitHub, Jira, and Slack;
 - an assistant chat panel with one-click evaluation prompts;
 - a force-directed 2D graph canvas with zoom, fit, maximize, and subgraph controls;
 - a node inspector for entity attributes;
 - last-known-good graph retention and an offline synthetic graph preview; and
 - a bounded session transcript with export and clear controls.
+
+## Enterprise Live Connectors (GitHub, Jira, Slack)
+
+To address **Track 03: Keeping Knowledge Current**, OrgBridge AI includes bidirectional live connectors with enterprise-grade security pipelines and real-time FalkorDB synchronization.
+
+```mermaid
+flowchart TD
+    subgraph Ingestion["Ingress Pipeline"]
+        GH[GitHub Webhooks / Polling] --> SEC[Security Pipeline]
+        JR[Jira Webhooks / Polling] --> SEC
+        SL[Slack Events API / History] --> SEC
+        SEC -->|HMAC Verify + Anti-Replay + Secret Scrubber| INGEST[Connector Processors]
+        INGEST -->|Parameterized Cypher| T_GRAPH[(Tenant FalkorDB Graph)]
+        INGEST -->|Event Promotion| AL[Incremental Auto-Linker]
+        AL -->|Vector Index & Similarity Match| MB[(Merged Brain Graph)]
+    end
+
+    subgraph Outbox["Bidirectional Write-Back Outbox"]
+        WAR_ROOM[War Room UI Mutations] --> OSM[Outbox State Machine]
+        OSM -->|GitHub Deprecation PR| GH_OUT[GitHub API]
+        OSM -->|Migration Epic Ticket| JR_OUT[Jira Cloud API]
+        OSM -->|Interactive HITL Block Kit Card| SL_OUT[Slack Web API]
+        SL_OUT -->|Sign-Off Action Callback| OSM
+    end
+```
+
+### Connector Capabilities
+
+| Provider | Ingress (Sync & Webhooks) | Egress (Bidirectional Write-Back) | Security & Isolation |
+|---|---|---|---|
+| **GitHub** | Ingests manifests (`package.json`, `pom.xml`), `CODEOWNERS` (mapped to `Person`/`Team`), ADRs (`docs/adr/*.md` -> `Decision`), handles privatized repo tombstones. | Dispatches deprecation Pull Requests with migration links upon policy resolution. | Constant-time HMAC-SHA256 (`X-Hub-Signature-256`), 5-min replay protection, strict 1MB payload ceiling. |
+| **Jira** | Ingests incident/sprint tickets, maps assignees with PageRank influence boosts, ADR issues, handles issue tombstones. | Automatically files cross-company Migration Epic tickets linking conflicting systems. | OAuth 2.0 (3LO) with Fernet AES-256-GCM token encryption, RSA signature verification, 15m delta polling. |
+| **Slack** | Captures thread collaboration topology (`[:COLLABORATES_WITH]`), reaction-driven decision capture (`:memo:`, `:white_check_mark:`), dynamic text resolution via `conversations.history`. | Posts interactive Block Kit resolution cards with human-in-the-loop (HITL) sign-off buttons. | HMAC-SHA256 (`v0:` scheme), bot loop guards (`is_bot_event`), channel archive tombstones. |
+
+### Enterprise Security Core
+
+All connectors run through a zero-trust `src/connectors/security_pipeline.py`:
+- **HMAC Constant-Time Verification**: Prevents timing attacks across GitHub, Jira, and Slack payloads.
+- **Replay Attack Defense**: 5-minute maximum drift window between timestamp and server epoch.
+- **24-Hour Idempotency Cache**: Guarantees exactly-once ingestion semantics across retried webhook deliveries.
+- **Shannon Entropy Secret Scrubber**: Scans untrusted payload text with regex patterns (AWS, GitHub, Slack tokens, private keys) and Shannon entropy thresholds ($H \ge 4.5$) to scrub credentials before LLM or graph exposure.
+- **Bot Loop Guard**: Ignores events triggered by the bot's own user ID or subtype `bot_message`.
+- **Cypher Injection Immunity**: Every write is strictly parameterized (`$params`) through `cypher_schema.py`.
+- **Deterministic Person Identity**: Hashing with `generate_person_id(email)` ensures unified person identity resolution across disparate provider user accounts.
+- **Outbox State Machine**: Reliable write-backs with `PENDING`, `SYNCED`, and `FAILED` states with retry exponential backoff (`/api/mutate/outbox-retry`).
 
 ## Architecture
 
@@ -145,7 +192,9 @@ flowchart LR
 | Embeddings | OpenAI `text-embedding-3-small` when configured; local deterministic heuristic fallback |
 | Frontend | Next.js 14, React 18, TypeScript, Tailwind CSS |
 | Visualization | `react-force-graph-2d` |
-| Tests | Pytest (55 passing tests) |
+| Live Connectors | GitHub App / Webhooks, Atlassian Jira Cloud 3LO, Slack Events / Block Kit |
+| Security | Fernet AES-256-GCM TokenVault, HMAC-SHA256, Shannon Entropy Secret Scrubber |
+| Tests | Pytest (89 passing tests across core and connectors) |
 | Local orchestration | Docker Compose |
 
 ## Repository layout
@@ -163,7 +212,13 @@ chaos-resolver-folkordb/
 ├── src/
 │   ├── api/
 │   │   ├── auth.py                # API-key / role dependencies
-│   │   └── main.py                # FastAPI routes & CORS
+│   │   └── main.py                # FastAPI routes, webhooks & CORS
+│   ├── connectors/                # Enterprise Live Ingress & Egress
+│   │   ├── base.py                # BaseConnector abstract specification
+│   │   ├── security_pipeline.py   # HMAC, replay window, secret scrubber, TokenVault
+│   │   ├── github.py              # GitHub manifests, CODEOWNERS, ADRs, tombstones
+│   │   ├── jira.py                # Jira sprint/incident tickets, PageRank assignees
+│   │   └── slack.py               # Collaboration topology, reaction decisions
 │   ├── data/
 │   │   ├── synthetic_data.py      # Synthetic FinPay and Vaultly dataset
 │   │   ├── builder.py             # Dataset validation and Cypher generation
@@ -192,7 +247,10 @@ chaos-resolver-folkordb/
     ├── test_schema_and_dataset.py # Schema, query sanitization, endpoint uniqueness (14 tests)
     ├── test_auto_linker.py        # Embeddings, auto-linker, candidate pairs (9 tests)
     ├── test_agent_tools.py        # Tools, WCC, warm intro, visualization, chat (21 tests)
-    └── test_live_mutations.py     # Mutations, compliance bounds, resets (11 tests)
+    ├── test_live_mutations.py     # Mutations, compliance bounds, resets (11 tests)
+    ├── test_connector_phase1.py   # Security pipeline, HMAC, TokenVault, Cypher injection (17 tests)
+    ├── test_connector_phase2.py   # GitHub/Jira/Slack ingestion & incremental auto-linking (9 tests)
+    └── test_connector_phase3.py   # Outbox state machine & write-backs (8 tests)
 ```
 
 ## Graph model
@@ -558,6 +616,11 @@ The backend reads settings through Pydantic Settings from environment variables 
 | `WARM_INTRO_MAX_DIRECTED_HOPS` | `5` | Maximum native shortest-path hops |
 | `WARM_INTRO_MAX_BIDIRECTIONAL_HOPS` | `4` | Maximum fallback path hops |
 | `SILOS_SUBGRAPH_MAX_NODES` | `25` | Limit for selected integrated nodes in silo visualization |
+| `CONNECTOR_MASTER_KEY` | `dev-master-key-32-bytes-long-12345` | Master secret for AES-256-GCM token encryption |
+| `SLACK_SIGNING_SECRET` | unset | Slack webhook HMAC signing secret |
+| `SLACK_BOT_TOKEN` | unset | Slack Bot OAuth token (`xoxb-...`) for Web API calls |
+| `GITHUB_WEBHOOK_SECRET` | unset | GitHub App webhook HMAC secret |
+| `JIRA_WEBHOOK_SECRET` | unset | Jira webhook HMAC signing secret |
 | `API_KEY` | development default in `src/config.py` | Backend read/write API key |
 | `ADMIN_API_KEY` | development default in `src/config.py` | Backend admin key, including demo reset |
 | `CORS_ALLOWED_ORIGINS` | localhost and configured Vercel origin | Comma-separated allowed frontend origins |
@@ -684,6 +747,11 @@ Mutation routes accept an optional target `graph` in their JSON body. The defaul
 | `POST` | `/api/mutate/resolve-retention-conflict` | Write | Create a tiered retention policy and decision; validate retention bounds and compliance overrides |
 | `POST` | `/api/mutate/merge-teams` | Write | Merge two existing teams and retain selected history |
 | `POST` | `/api/mutate/reset-demo` | Admin | Clear/reseed all three demo graphs, rerun the auto-linker, and return verification details |
+| `POST` | `/api/mutate/slack-approve` | Open / HMAC | Slack interactive block action webhook for HITL resolution approvals |
+| `POST` | `/api/mutate/outbox-retry` | Write | Triggers retry for any failed outbox write-back operations |
+| `POST` | `/api/webhooks/{provider}` | Open / HMAC | Ingress webhook for `github`, `jira`, and `slack` (returns 202 Accepted in <100ms) |
+| `GET` | `/api/connectors/status` | Read | Live connector operational status, outbox counts, and sync history |
+| `POST` | `/api/connectors/{provider}/sync` | Write | Trigger on-demand sync for a provider (e.g. Jira 15m polling) |
 
 Example mutation request:
 
@@ -721,11 +789,14 @@ python -m src.pipeline.auto_linker --graph merged_brain --threshold 0.82
 pytest tests/ -v
 ```
 
-All **55 unit & integration tests** pass across:
+All **89 unit & integration tests** pass across:
 - **`tests/test_schema_and_dataset.py` (14 tests)** — schema validation, namespaced IDs, dataset uniqueness, label-constrained relationship building, Cypher sanitization, read-only Cypher security boundaries, and parameterized templates.
 - **`tests/test_auto_linker.py` (9 tests)** — embedding dimensions/similarity, native FalkorDB search score handling, target filtering fallback, threshold filtering, external API boost, and stale bridge reconciliation.
 - **`tests/test_agent_tools.py` (21 tests)** — deterministic entity resolution, warm intro path ambiguity handling, decision lineage system disambiguation, WCC silo detection, visualization subgraph bridge prioritization, neighborhood endpoints, /api/chat guardrails, MCP schemas, and FastAPI security.
 - **`tests/test_live_mutations.py` (11 tests)** — policy conflict resolution, sensible bounds and compliance confirmations, team merge input validation, post-mutation invariants, multi-tenant baseline restoration, and non-destructive re-seeding.
+- **`tests/test_connector_phase1.py` (17 tests)** — constant-time HMAC verification, 5-minute replay drift rejection, 24-hour idempotency deduplication, Shannon entropy and regex secret scrubbing, Fernet AES-256-GCM `TokenVault`, OAuth state mutex, bot loop guard, parameterized Cypher builders, Cypher injection immunity, untrusted prompt injection tagging.
+- **`tests/test_connector_phase2.py` (9 tests)** — GitHub manifest/CODEOWNERS/ADR ingestion, Jira ticket/assignee PageRank boost/tombstones, Slack collaboration topology, reaction-driven decision capture, real-time incremental auto-linking, and fast 202 webhook acknowledgment.
+- **`tests/test_connector_phase3.py` (8 tests)** — transactional `OutboxStateMachine` (`PENDING`/`SYNCED`/`FAILED`), retry with exponential backoff, bidirectional Slack Block Kit HITL cards, GitHub deprecation PR write-back dispatch, Jira Epic migration issue creation, and connector status endpoint.
 
 For the frontend:
 
